@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.excilys.com)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,60 +13,77 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.action.ws
 
-import com.ning.http.client.websocket.{ WebSocket, WebSocketCloseCodeReasonListener, WebSocketTextListener }
+import io.gatling.commons.util.Clock
+import io.gatling.core.stats.StatsEngine
+import io.gatling.http.action.ws.fsm._
+import io.gatling.http.client.WebSocketListener
+import io.gatling.http.util.HttpHelper
+import io.gatling.netty.util.ahc.{ ByteBufUtils, Utf8ByteBufCharsetDecoder }
 
 import akka.actor.ActorRef
-import io.gatling.core.util.TimeHelper.nowMillis
-import io.gatling.http.ahc.WsTx
-import com.typesafe.scalalogging.slf4j.StrictLogging
+import com.typesafe.scalalogging.LazyLogging
+import io.netty.handler.codec.http.cookie.Cookie
+import io.netty.handler.codec.http.websocketx.{ BinaryWebSocketFrame, CloseWebSocketFrame, PongWebSocketFrame, TextWebSocketFrame }
+import io.netty.handler.codec.http.{ HttpHeaders, HttpResponseStatus }
 
-class WsListener(tx: WsTx, wsActor: ActorRef)
-    extends WebSocketTextListener with WebSocketCloseCodeReasonListener with StrictLogging {
+class WsListener(wsActor: ActorRef, statsEngine: StatsEngine, clock: Clock) extends WebSocketListener with LazyLogging {
 
-  private var state: WsListenerState = Opening
+  private var cookies: List[Cookie] = Nil
 
-  def onOpen(webSocket: WebSocket): Unit = {
-    state = Open
-    wsActor ! OnOpen(tx, webSocket, nowMillis)
+  //[fl]
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //[fl]
+
+  override def onHttpResponse(httpResponseStatus: HttpResponseStatus, httpHeaders: HttpHeaders): Unit = {
+    logger.debug(s"Received response to WebSocket CONNECT: $httpResponseStatus $httpHeaders")
+    cookies = HttpHelper.responseCookies(httpHeaders)
   }
 
-  def onMessage(message: String): Unit = {
-    wsActor ! OnMessage(message, nowMillis)
-  }
+  override def onWebSocketOpen(): Unit =
+    wsActor ! WebSocketConnected(this, cookies, clock.nowMillis)
 
-  def onFragment(fragment: String, last: Boolean): Unit = {}
+  override def onCloseFrame(frame: CloseWebSocketFrame): Unit =
+    wsActor ! WebSocketClosed(frame.statusCode, frame.reasonText, clock.nowMillis)
 
-  def onClose(webSocket: WebSocket): Unit = {}
+  override def onTextFrame(frame: TextWebSocketFrame): Unit =
+    wsActor ! TextFrameReceived(Utf8ByteBufCharsetDecoder.decodeUtf8(frame.content()), clock.nowMillis)
 
-  def onClose(webSocket: WebSocket, statusCode: Int, reason: String): Unit = {
-    state match {
-      case Open =>
-        state = Closed
-        wsActor ! OnClose(statusCode, reason, nowMillis)
+  override def onBinaryFrame(frame: BinaryWebSocketFrame): Unit =
+    wsActor ! BinaryFrameReceived(ByteBufUtils.byteBuf2Bytes(frame.content()), clock.nowMillis)
 
-      case _ => // discard
-    }
-  }
+  override def onPongFrame(pongWebSocketFrame: PongWebSocketFrame): Unit =
+    logger.debug("Received PONG frame")
 
-  def onError(t: Throwable): Unit = {
-    state match {
-      case Opening =>
-        wsActor ! OnFailedOpen(tx, t.getMessage, nowMillis)
-
-      case Open =>
-        logger.error(s"Websocket gave an unexpected error '${t.getMessage}', please report to Gatling project", t)
-
-      case Closed => // discard
-    }
-  }
+  override def onThrowable(t: Throwable): Unit =
+    wsActor ! WebSocketCrashed(t, clock.nowMillis)
 }
-
-private sealed trait WsListenerState
-
-private case object Opening extends WsListenerState
-
-private case object Open extends WsListenerState
-
-private case object Closed extends WsListenerState

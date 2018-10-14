@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,20 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.check.header
 
-import io.gatling.core.check.DefaultMultipleFindCheckBuilder
+import io.gatling.core.check._
 import io.gatling.core.session.{ Expression, RichExpression }
 import io.gatling.http.check.HttpCheck
 import io.gatling.http.check.HttpCheckBuilders._
 import io.gatling.http.response.Response
 
-object HttpHeaderCheckBuilder {
+trait HttpHeaderCheckType
 
-  def header(headerName: Expression[String]) =
-    new DefaultMultipleFindCheckBuilder[HttpCheck, Response, Response, String](HeaderCheckFactory, PassThroughResponsePreparer) {
-      def findExtractor(occurrence: Int) = headerName.map(new SingleHttpHeaderExtractor(_, occurrence))
-      def findAllExtractor = headerName.map(new MultipleHttpHeaderExtractor(_))
-      def countExtractor = headerName.map(new CountHttpHeaderExtractor(_))
-    }
+class HttpHeaderCheckBuilder(headerName: Expression[String]) extends DefaultMultipleFindCheckBuilder[HttpHeaderCheckType, Response, String](displayActualValue = true) {
+  override def findExtractor(occurrence: Int): Expression[SingleHttpHeaderExtractor] = headerName.map(new SingleHttpHeaderExtractor(_, occurrence))
+  override def findAllExtractor: Expression[MultipleHttpHeaderExtractor] = headerName.map(new MultipleHttpHeaderExtractor(_))
+  override def countExtractor: Expression[CountHttpHeaderExtractor] = headerName.map(new CountHttpHeaderExtractor(_))
+}
+
+object HttpHeaderCheckMaterializer extends CheckMaterializer[HttpHeaderCheckType, HttpCheck, Response, Response] {
+
+  override val specializer: Specializer[HttpCheck, Response] = HeaderSpecializer
+
+  override val preparer: Preparer[Response, Response] = PassThroughResponsePreparer
 }

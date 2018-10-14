@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,39 +13,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.jms.check
 
-import org.specs2.mutable.Specification
-import io.gatling.core.validation.{ Failure, Success }
-import io.gatling.core.session.Session
-import io.gatling.jms.Predef._
-import io.gatling.core.Predef._
-import io.gatling.jms.{ MockMessage, JmsCheck }
-import scala.collection.mutable
+import java.util.{ HashMap => JHashMap }
+
+import io.gatling.{ ValidationValues, BaseSpec }
+import io.gatling.commons.validation._
 import io.gatling.core.config.GatlingConfiguration
+import io.gatling.core.CoreDsl
+import io.gatling.core.session.Session
+import io.gatling.jms.{ MockMessage, JmsCheck }
 
-class JmsXPathCheckSpec extends Specification with MockMessage {
+class JmsXPathCheckSpec extends BaseSpec with ValidationValues with MockMessage with CoreDsl with JmsCheckSupport {
 
-  GatlingConfiguration.setUp()
+  val configuration = GatlingConfiguration.loadForTest()
+  implicit def cache: JHashMap[Any, Any] = new JHashMap
 
-  implicit def cache = mutable.Map.empty[Any, Any]
+  val session = Session("mockSession", 0, System.currentTimeMillis())
+  val check: JmsCheck = xpath("/ok").find
 
-  "xpath check" should {
-    val session = Session("mockSession", "mockUserName")
-    val check: JmsCheck = xpath("/ok").find
+  "xpath check" should "return success if condition is true" in {
+    check.check(textMessage("<ok></ok>"), session) shouldBe a[Success[_]]
+  }
 
-    "return success if condition is true" in {
-      check.check(textMessage("<ok></ok>"), session) must beAnInstanceOf[Success[_]]
-    }
+  it should "return failure if condition is false" in {
+    check.check(textMessage("<ko></ko>"), session) shouldBe a[Failure]
+  }
 
-    "return failure if condition is false" in {
-      check.check(textMessage("<ko></ko>"), session) must beAnInstanceOf[Failure]
-    }
-
-    "return failure if message is not TextMessage" in {
-      check.check(message, session) must beLike {
-        case Failure(m) if m contains "Unsupported message type" => ok
-      }
-    }
+  it should "return failure if message is not TextMessage" in {
+    check.check(message, session).failed.message should include("Unsupported message type")
   }
 }

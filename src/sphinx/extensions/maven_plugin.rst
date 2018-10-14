@@ -1,112 +1,138 @@
+.. _maven-plugin:
+
 ############
-Maven Plugin
+Maven plugin
 ############
 
 .. highlight:: xml
 
 Thanks to this plugin, Gatling can be launched when building your project, for example with your favorite CI solution.
 
-Set up the repositories
-=======================
+Versions
+========
 
-Gatling depends on libraries that are hosted on Maven Central.
+Check out available versions on `Maven Central <https://search.maven.org/search?q=g:io.gatling%20AND%20a:gatling-maven-plugin&core=gav>`_.
 
-Set up the gatling-maven-plugin
-===============================
+Beware that milestones (M versions) are not documented for OSS users and are only released for `FrontLine <https://gatling.io/gatling-frontline/>`_ customers.
 
-::
+Setup
+=====
+
+In your ``pom.xml``, add::
 
   <dependencies>
     <dependency>
-      <groupId>io.gatling</groupId>
+      <groupId>io.gatling.highcharts</groupId>
       <artifactId>gatling-charts-highcharts</artifactId>
-      <version>X.Y.Z</version>
+      <version>MANUALLY_REPLACE_WITH_LATEST_VERSION</version>
       <scope>test</scope>
     </dependency>
-  <dependencies>
+  </dependencies>
 
   <plugin>
     <groupId>io.gatling</groupId>
     <artifactId>gatling-maven-plugin</artifactId>
-    <version>X.Y.Z</version>
+    <version>MANUALLY_REPLACE_WITH_LATEST_VERSION</version>
   </plugin>
 
-.. note:: As the Highcharts based reports library is developed as a separate project, you are required to provide it as a dependency.
+Demo sample
+===========
+
+You can find a `sample project demoing the gatling-sbt-plugin <https://github.com/gatling/gatling-sbt-plugin-demo>`_ in Gatling's Github organization.
+
+You can also use the :ref:`gatling-highcharts-maven-archetype <maven-archetype>` to bootstrap your project.
+
+Usage
+=====
+
+You can directly launch the gatling-maven-plugin with the ``test`` goal::
+
+  mvn gatling:test
+
+It's bound by default to the ``integration-test`` phase.
 
 .. _maven-advanced-configuration:
 
-Optional advanced configuration
-===============================
+Configuration
+=============
 
-The example below shows the default values.
+The example below shows the default values (so don't bother specifying options you don't override!!!)::
+
+  <configuration>
+    <simulationClass>foo.Bar</simulationClass>                               <!-- the name of the single Simulation class to run -->
+    <runMultipleSimulations>false</runMultipleSimulations>                   <!-- if the plugin should run multiple simulations sequentially -->
+    <includes>                                                               <!-- include filters, see dedicated section below -->
+      <include></include>
+    </includes>
+    <excludes>                                                               <!-- exclude filters, see dedicated section below -->
+      <exclude></exclude>
+    </excludes>
+    <noReports>false</noReports>                                             <!-- to disable generating HTML reports -->
+    <reportsOnly></reportsOnly>                                              <!-- to only trigger generating HTML reports from the log file contained in folder parameter -->
+    <runDescription>This-is-the-run-description</runDescription>             <!-- short text that will be displayed in the HTML reports -->
+    <skip>false</skip>                                                       <!-- skip executing this plugin -->
+    <failOnError>true</failOnError>                                          <!-- report failure in case of assertion failure, typically to fail CI pipeline -->
+    <continueOnAssertionFailure>false</continueOnAssertionFailure>           <!-- keep on executing multiple simulations even if one fails -->
+    <useOldJenkinsJUnitSupport>false</useOldJenkinsJUnitSupport>             <!-- report results to Jenkins JUnit support (workaround until we manage to get Gatling support into Jenkins) -->
+    <jvmArgs>
+      <jvmArg>-DmyExtraParam=foo</jvmArg>                                    <!-- pass extra parameters to the Gatling JVM -->
+    </jvmArgs>
+    <overrideJvmArgs>false</overrideJvmArgs>                                 <!-- if above option should override the defaults instead of replacing them -->
+    <propagateSystemProperties>true</propagateSystemProperties>              <!-- if System properties from the maven JVM should be propagated to the Gatling forked one -->
+    <compilerJvmArgs>
+      <compilerJvmArg>-DmyExtraParam=foo</compilerJvmArg>                    <!-- pass extra parameters to the Compiler JVM -->
+    </compilerJvmArgs>
+    <overrideCompilerJvmArgs>false</overrideCompilerJvmArgs>                 <!-- if above option should override the defaults instead of replacing them -->
+    <extraScalacOptions>                                                     <!-- extra options to be passed to scalac -->
+      <extraScalacOption></extraScalacOption>
+    </extraScalacOptions>
+    <disableCompiler>false</disableCompiler>                                 <!-- if compiler should be disabled, typically because another plugin has already compiled sources -->
+    <simulationsFolder>${project.basedir}/src/test/scala</simulationsFolder> <!-- where the simulations to be compiled are located -->
+    <resourcesFolder>${project.basedir}/src/test/resources</resourcesFolder> <!-- where the test resources are located -->
+    <resultsFolder>${project.basedir}/target/gatling</resultsFolder>         <!-- where the simulation log and the HTML reports will be generated -->
+  </configuration>
+
+Includes/Excludes filters
+-------------------------
+
+When running multiple simulations, you can control which simulations will be triggers with the ``includes`` and ``excludes`` filters.
+Those use the ant pattern syntax and are matched against class names.
+Also note that those filters are only applied against the classes that were compiled from sources in the project the plugin is set.
 
 ::
 
   <configuration>
-    <configDir>src/test/resources</configDir>
-    <dataFolder>src/test/resources/data</dataFolder>
-    <resultsFolder>target/gatling/results</resultsFolder>
-    <requestBodiesFolder>src/test/resources/request-bodies</requestBodiesFolder>
-    <simulationsFolder>src/test/scala</simulationsFolder>
+    <!--   ...  -->
+    <runMultipleSimulations>true</runMultipleSimulations>
     <includes>
-        <include>**/*.scala</include>
+      <include>my.package.*</include>
     </includes>
     <excludes>
-        <exclude>advanced/*.scala</exclude>
+      <exclude>my.package.IgnoredSimulation</exclude>
     </excludes>
-  <!--    <noReports>false</noReports> -->
-  <!--   <reportsOnly>directoryName</reportsOnly> -->
-  <!--   <simulationClass>foo.Bar</simulationClass> -->
-  <!--   <jvmArgs> -->
-  <!--     <jvmArg>-DmyExtraParam=foo</jvmArg> -->
-  <!--   </jvmArgs> -->
-  <!--    <fork>true</fork> -->
-  <!--    <propagateSystemProperties>true</propagateSystemProperties> -->
-  <!--   <failOnError>true</failOnError> -->
   </configuration>
 
-See `source code <https://github.com/excilys/gatling-maven-plugin/blob/master/src/main/java/io/gatling/mojo/GatlingMojo.java>`_ for more documentation. 
+.. note:: The order of filters has no impact on execution order, simulations will be sorted by class name alphabetically.
 
-Override the logback.xml file
-=============================
+Disabling compiler
+==================
+
+By default, the gatling-maven-plugin takes care of compiling your Scala code, so you can directly run ``mvn gatling:execute``.
+
+Then, for some reason, you might want to have another plugin, such as the `scala-maven-plugin <https://github.com/davidB/scala-maven-plugin>`_
+or the `scalor-maven-plugin <https://github.com/random-maven/scalor-maven-plugin>`_, take care of compiling.
+Then, you can disable the Gatling compiler so you don't compile twice::
+
+  <configuration>
+    <disableCompiler>true</disableCompiler>
+  </configuration>
+
+Overriding the logback.xml file
+===============================
 
 You can either have a ``logback-test.xml`` that has precedence over the embedded ``logback.xml`` file, or add a JVM option ``-Dlogback.configurationFile=myFilePath``.
 
-Running the Plugin
-==================
+Sources
+=======
 
-The standard way to run the plugin is to start the ``execute``::
-
-  mvn gatling:execute
-
-Then, one might want to run the plugin several times in a build (e.g. in order to run several Simulations sequentially).
-
-A solution is then to use maven `executions <http://maven.apache.org/guides/mini/guide-configuring-plugins.html#Using_the_executions_Tag>`_.
-
-If you do so and have per execution configurations, beware that those won't be used when running ``gatling:execute``, as executions are triggered by maven phases.
-
-::
-
-  <plugin>
-    <groupId>io.gatling</groupId>
-    <artifactId>gatling-maven-plugin</artifactId>
-    <version>${gatling.version}</version>
-    <executions>
-      <execution>
-        <phase>test</phase>
-        <goals>
-          <goal>execute</goal>
-        </goals>
-        <configuration>
-          <simulationsFolder>foo</simulationsFolder>
-        </configuration>
-      </execution>
-    </executions>
-  </plugin>
-
-In the above example, as the execution is attached to the test phase, ``simulationsFolder`` will only be properly configured when running ``mvn test``.
-
-Sample
-======
-
-See sample project `here <https://github.com/excilys/gatling-maven-plugin-demo>`_.
+If you're interested in contributing, you can find the `gatling-maven-plugin sources <https://github.com/gatling/gatling-maven-plugin>`_ on Github.

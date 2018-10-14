@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,63 +13,121 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.request.builder
 
-import java.net.URI
+import scala.collection.JavaConverters._
 
-import com.ning.http.client.{ RequestBuilder => AHCRequestBuilder }
+import io.gatling.commons.validation._
+import io.gatling.core.body._
+import io.gatling.core.config.GatlingConfiguration
+import io.gatling.core.session._
+import io.gatling.core.util.FileResource
+import io.gatling.http.HeaderNames
+import io.gatling.http.cache.{ ContentCacheEntry, HttpCaches }
+import io.gatling.http.client.body.bytearray.ByteArrayRequestBodyBuilder
+import io.gatling.http.client.body.bytearrays.ByteArraysRequestBodyBuilder
+import io.gatling.http.client.body.file.FileRequestBodyBuilder
+import io.gatling.http.client.body.form.FormUrlEncodedRequestBodyBuilder
+import io.gatling.http.client.body.is.InputStreamRequestBodyBuilder
+import io.gatling.http.client.body.multipart.{ MultipartFormDataRequestBodyBuilder, StringPart }
+import io.gatling.http.client.body.string.StringRequestBodyBuilder
+import io.gatling.http.client.{ Request, RequestBuilder => AhcRequestBuilder }
+import io.gatling.http.protocol.{ HttpProtocol, Remote }
+import io.gatling.http.request.BodyPart
 
-import io.gatling.core.session.Session
-import io.gatling.core.validation.{ FailureWrapper, SuccessWrapper, Validation }
-import io.gatling.http.{ HeaderNames, HeaderValues }
-import io.gatling.http.cache.CacheHandling
-import io.gatling.http.config.HttpProtocol
-import io.gatling.http.util.HttpHelper
+class HttpRequestExpressionBuilder(
+    commonAttributes: CommonAttributes,
+    httpAttributes:   HttpAttributes,
+    httpCaches:       HttpCaches,
+    httpProtocol:     HttpProtocol,
+    configuration:    GatlingConfiguration
+)
+  extends RequestExpressionBuilder(commonAttributes, httpCaches, httpProtocol, configuration) {
 
-class HttpRequestExpressionBuilder(commonAttributes: CommonAttributes, httpAttributes: HttpAttributes, protocol: HttpProtocol)
-    extends RequestExpressionBuilder(commonAttributes, protocol) {
+  import RequestExpressionBuilder._
 
-  def makeAbsolute(url: String): Validation[String] =
-    if (HttpHelper.isAbsoluteHttpUrl(url))
-      url.success
-    else
-      protocol.baseURL match {
-        case Some(baseURL) => (baseURL + url).success
-        case _             => s"No protocol.baseURL defined but provided url is relative : $url".failure
+  private val ConfigureFormParams: RequestBuilderConfigure =
+    session => requestBuilder => httpAttributes.formParams.mergeWithFormIntoParamJList(httpAttributes.form, session).map { resolvedFormParams =>
+      requestBuilder.setBodyBuilder(new FormUrlEncodedRequestBodyBuilder(resolvedFormParams))
+    }
+
+  private def configureBodyParts(session: Session, requestBuilder: AhcRequestBuilder, bodyParts: List[BodyPart]): Validation[AhcRequestBuilder] =
+    for {
+      params <- httpAttributes.formParams.mergeWithFormIntoParamJList(httpAttributes.form, session)
+      stringParts = params.asScala.map(param => new StringPart(param.getName, param.getValue, charset, null, null, null, null))
+      parts <- Validation.sequence(bodyParts.map(_.toMultiPart(session)))
+    } yield requestBuilder.setBodyBuilder(new MultipartFormDataRequestBodyBuilder((parts ++ stringParts).asJava))
+
+  private def setBody(session: Session, requestBuilder: AhcRequestBuilder, body: Body): Validation[AhcRequestBuilder] =
+    body match {
+      case StringBody(string) => string(session).map(s => requestBuilder.setBodyBuilder(new StringRequestBodyBuilder(s)))
+      case RawFileBody(resourceWithCachedBytes) => resourceWithCachedBytes(session).map {
+        case ResourceAndCachedBytes(resource, cachedBytes) =>
+          cachedBytes match {
+            case Some(bytes) => requestBuilder.setBodyBuilder(new ByteArrayRequestBodyBuilder(bytes))
+            case None =>
+              resource match {
+                case FileResource(file) => requestBuilder.setBodyBuilder(new FileRequestBodyBuilder(file))
+                case _                  => requestBuilder.setBodyBuilder(new ByteArrayRequestBodyBuilder(resource.bytes))
+              }
+          }
       }
+      case ByteArrayBody(bytes)                  => bytes(session).map(b => requestBuilder.setBodyBuilder(new ByteArrayRequestBodyBuilder(b)))
+      case CompositeByteArrayBody(byteArrays, _) => byteArrays(session).map(bs => requestBuilder.setBodyBuilder(new ByteArraysRequestBodyBuilder(bs.toArray)))
+      case InputStreamBody(is)                   => is(session).map(is => requestBuilder.setBodyBuilder(new InputStreamRequestBodyBuilder(is)))
+      case body: PebbleBody                      => body.apply(session).map(s => requestBuilder.setBodyBuilder(new StringRequestBodyBuilder(s)))
+    }
 
-  def configureCaches(session: Session, uri: URI)(requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] = {
-    CacheHandling.getLastModified(protocol, session, uri).foreach(requestBuilder.setHeader(HeaderNames.IfModifiedSince, _))
-    CacheHandling.getEtag(protocol, session, uri).foreach(requestBuilder.setHeader(HeaderNames.IfNoneMatch, _))
-    requestBuilder.success
-  }
-
-  def configureParts(session: Session)(requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] = {
-    require(!httpAttributes.body.isDefined || httpAttributes.bodyParts.isEmpty, "Can't have both a body and body parts!")
+  private val configureBody: RequestBuilderConfigure = {
+    require(httpAttributes.body.isEmpty || httpAttributes.bodyParts.isEmpty, "Can't have both a body and body parts!")
 
     httpAttributes.body match {
-      case Some(body) =>
-        body.setBody(requestBuilder, session)
-
-      case None =>
-        httpAttributes.bodyParts match {
-          case Nil => requestBuilder.success
-          case bodyParts =>
-            if (!commonAttributes.headers.contains(HeaderNames.ContentType))
-              requestBuilder.addHeader(HeaderNames.ContentType, HeaderValues.MultipartFormData)
-
-            bodyParts.foldLeft(requestBuilder.success) { (requestBuilder, part) =>
-              for {
-                requestBuilder <- requestBuilder
-                part <- part.toMultiPart(session)
-              } yield requestBuilder.addBodyPart(part)
-            }
+      case Some(body) => session => requestBuilder => setBody(session, requestBuilder, body)
+      case _ =>
+        if (httpAttributes.bodyParts.nonEmpty) { session => requestBuilder => configureBodyParts(session, requestBuilder, httpAttributes.bodyParts)
+        } else if (httpAttributes.formParams.nonEmpty || httpAttributes.form.nonEmpty) {
+          ConfigureFormParams
+        } else {
+          ConfigureIdentity
         }
     }
   }
 
-  override protected def configureRequestBuilder(session: Session, uri: URI, requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] =
-    super.configureRequestBuilder(session, uri, requestBuilder)
-      .flatMap(configureCaches(session, uri))
-      .flatMap(configureParts(session))
+  private val configurePriorKnowledge: RequestBuilderConfigure = {
+    if (httpProtocol.requestPart.enableHttp2) { session => requestBuilder =>
+      val http2PriorKnowledge = httpCaches.isHttp2PriorKnowledge(session, Remote(requestBuilder.getUri))
+      requestBuilder
+        .setHttp2Enabled(true)
+        .setAlpnRequired(http2PriorKnowledge.forall(_ == true)) // ALPN is necessary only if we know that this remote is using HTTP/2 or if we still don't know
+        .setHttp2PriorKnowledge(http2PriorKnowledge.contains(true))
+        .success
+    } else {
+      ConfigureIdentity
+    }
+  }
+
+  override protected def configureRequestBuilder(session: Session, requestBuilder: AhcRequestBuilder): Validation[AhcRequestBuilder] =
+    super.configureRequestBuilder(session, requestBuilder)
+      .flatMap(configureBody(session))
+      .flatMap(configurePriorKnowledge(session))
+
+  private def configureCachingHeaders(session: Session)(request: Request): Request = {
+    httpCaches.contentCacheEntry(session, request).foreach {
+      case ContentCacheEntry(_, etag, lastModified) =>
+        etag.foreach(request.getHeaders.set(HeaderNames.IfNoneMatch, _))
+        lastModified.foreach(request.getHeaders.set(HeaderNames.IfModifiedSince, _))
+    }
+    request
+  }
+
+  // hack because we need the request with the final uri
+  override def build: Expression[Request] = {
+    val exp = super.build
+    if (httpProtocol.requestPart.cache) {
+      session => exp(session).map(configureCachingHeaders(session))
+    } else {
+      exp
+    }
+  }
 }

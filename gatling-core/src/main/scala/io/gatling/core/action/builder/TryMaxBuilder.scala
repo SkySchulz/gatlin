@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,25 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.action.builder
 
-import akka.actor.ActorRef
-import akka.actor.ActorDSL.actor
-import io.gatling.core.action.TryMax
-import io.gatling.core.config.Protocols
-import io.gatling.core.structure.ChainBuilder
+import io.gatling.core.action.{ Action, TryMax }
+import io.gatling.core.session.Expression
+import io.gatling.core.structure.{ ChainBuilder, ScenarioContext }
 
-class TryMaxBuilder(times: Int, counterName: String, loopNext: ChainBuilder) extends ActionBuilder {
+class TryMaxBuilder(times: Expression[Int], counterName: String, loopNext: ChainBuilder) extends ActionBuilder {
 
-  def build(next: ActorRef, protocols: Protocols) = {
-    val tryMaxActor = actor(new TryMax(times, counterName, next))
-    val loopContent = loopNext.build(tryMaxActor, protocols)
-    tryMaxActor ! loopContent
-    tryMaxActor
+  override def build(ctx: ScenarioContext, next: Action): Action = {
+    import ctx._
+    val tryMaxAction = new TryMax(times, counterName, coreComponents.statsEngine, coreComponents.clock, next)
+    val loopNextAction = loopNext.build(ctx, tryMaxAction)
+    tryMaxAction.initialize(loopNextAction, ctx.coreComponents.actorSystem)
+    tryMaxAction
   }
-
-  override def registerDefaultProtocols(protocols: Protocols) =
-    loopNext.actionBuilders.foldLeft(protocols) { (protocols, actionBuilder) =>
-      actionBuilder.registerDefaultProtocols(protocols)
-    }
 }

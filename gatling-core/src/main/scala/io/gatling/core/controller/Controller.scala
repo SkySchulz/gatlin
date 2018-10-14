@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,177 +13,113 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.controller
 
-import java.util.UUID.randomUUID
+import scala.util.{ Failure, Success, Try }
 
-import scala.collection.mutable
-import scala.concurrent.Future
-import scala.concurrent.duration.{ DurationInt, FiniteDuration }
-import scala.util.{ Failure => SFailure, Success => SSuccess }
+import io.gatling.core.config.GatlingConfiguration
+import io.gatling.core.controller.inject.InjectorCommand
+import io.gatling.core.controller.throttle.Throttler
+import io.gatling.core.scenario.SimulationParams
+import io.gatling.core.stats.StatsEngine
 
-import org.joda.time.DateTime.now
+import akka.actor.{ ActorRef, ActorSelection, ActorSystem, Props }
 
-import com.typesafe.scalalogging.slf4j.StrictLogging
+object Controller {
 
-import akka.actor.ActorRef
-import akka.actor.ActorDSL.actor
-import akka.util.Timeout
-import io.gatling.core.action.UserEnd
-import io.gatling.core.akka.{ AkkaDefaults, BaseActor }
-import io.gatling.core.controller.throttle.{ Throttler, ThrottlingProtocol }
-import io.gatling.core.result.message.{ End, Start }
-import io.gatling.core.result.writer.{ DataWriter, RunMessage, UserMessage }
-import io.gatling.core.scenario.Scenario
-import io.gatling.core.util.TimeHelper.{ NanoTimeReference, nowMillis }
+  val ControllerActorName = "gatling-controller"
 
-case class Timings(maxDuration: Option[FiniteDuration], globalThrottling: Option[ThrottlingProtocol], perScenarioThrottlings: Map[String, ThrottlingProtocol])
+  def props(statsEngine: StatsEngine, injector: ActorRef, throttler: Throttler, simulationParams: SimulationParams, configuration: GatlingConfiguration) =
+    Props(new Controller(statsEngine, injector, throttler, simulationParams, configuration))
 
-object Controller extends AkkaDefaults with StrictLogging {
-
-  private var _instance: Option[ActorRef] = None
-
-  def start(): Unit = {
-    _instance = Some(actor(new Controller))
-    system.registerOnTermination(_instance = None)
-    UserEnd.start()
-  }
-
-  def !(message: Any): Unit =
-    _instance match {
-      case Some(c) => c ! message
-      case None    => logger.error("Controller hasn't been started")
-    }
-
-  def ?(message: Any)(implicit timeout: Timeout): Future[Any] = _instance match {
-    case Some(c) => c.ask(message)(timeout)
-    case None    => throw new UnsupportedOperationException("Controller has not been started")
-  }
+  def controllerSelection(system: ActorSystem): ActorSelection =
+    system.actorSelection("/user/" + ControllerActorName)
 }
 
-class Controller extends BaseActor {
+class Controller(statsEngine: StatsEngine, injector: ActorRef, throttler: Throttler, simulationParams: SimulationParams, configuration: GatlingConfiguration)
+  extends ControllerFSM {
 
-  var scenarios: Seq[Scenario] = _
-  var totalNumberOfUsers = 0
-  val activeUsers = mutable.Map.empty[String, UserMessage]
-  var finishedUsers = 0
-  var launcher: ActorRef = _
-  var runId: String = _
-  var timings: Timings = _
-  var throttler: Throttler = _
+  import ControllerState._
+  import ControllerData._
+  import ControllerCommand._
 
-  val uninitialized: Receive = {
+  val maxDurationTimer = "maxDurationTimer"
 
-    case Run(simulation, simulationId, description, runTimings) =>
-      // important, initialize time reference
-      val timeRef = NanoTimeReference
-      launcher = sender
-      timings = runTimings
-      scenarios = simulation.scenarios
+  startWith(WaitingToStart, NoData)
 
-      if (scenarios.isEmpty)
-        launcher ! SFailure(new IllegalArgumentException(s"Simulation ${simulation.getClass} doesn't have any configured scenario"))
+  when(WaitingToStart) {
+    case Event(Start(scenarios), NoData) =>
+      val initData = InitData(sender(), scenarios)
 
-      else if (scenarios.map(_.name).toSet.size != scenarios.size)
-        launcher ! SFailure(new IllegalArgumentException(s"Scenario names must be unique but found a duplicate"))
-
-      else {
-        totalNumberOfUsers = scenarios.map(_.injectionProfile.users).sum
-        logger.info(s"Total number of users : $totalNumberOfUsers")
-
-        val runMessage = RunMessage(simulation.getClass.getName, simulationId, now, description)
-        runId = runMessage.runId
-        DataWriter.init(runMessage, scenarios, self)
-        context.become(waitingForDataWriterToInit)
+      simulationParams.maxDuration.foreach { maxDuration =>
+        logger.debug("Setting up max duration")
+        setTimer(maxDurationTimer, MaxDurationReached(maxDuration), maxDuration)
       }
+
+      throttler.start()
+      statsEngine.start()
+      injector ! InjectorCommand.Start(self, initData.scenarios)
+
+      goto(Started) using StartedData(initData)
   }
 
-  def waitingForDataWriterToInit: Receive = {
+  when(Started) {
+    case Event(InjectorStopped, data: StartedData) =>
+      logger.info(s"Injector has stopped, initiating graceful stop")
+      stopGracefully(data, None)
 
-    case DataWritersInitialized(result) => result match {
-      case f: SFailure[_] => launcher ! f
+    case Event(MaxDurationReached(maxDuration), data: StartedData) =>
+      logger.info(s"Max duration of $maxDuration reached")
+      stopGracefully(data, None)
 
-      case _ =>
-        val userIdRoot = math.abs(randomUUID.getMostSignificantBits) + "-"
+    case Event(Crash(exception), data: StartedData) =>
+      logger.error(s"Simulation crashed", exception)
+      cancelTimer(maxDurationTimer)
+      stopGracefully(data, Some(exception))
 
-        logger.debug("Launching All Scenarios")
-        scenarios.foldLeft(0) { (i, scenario) =>
-          scenario.run(userIdRoot, i)
-          i + scenario.injectionProfile.users
-        }
-        logger.debug("Finished Launching scenarios executions")
+    case Event(Kill, StartedData(initData)) =>
+      logger.error("Simulation was killed")
+      stop(EndData(initData, None))
+  }
 
-        timings.maxDuration.foreach {
-          logger.debug("Setting up max duration")
-          scheduler.scheduleOnce(_) {
-            self ! ForceTermination(None)
-          }
-        }
+  private def stopGracefully(startedData: StartedData, exception: Option[Exception]): State = {
+    statsEngine.stop(self, exception)
+    goto(WaitingForResourcesToStop) using EndData(startedData.initData, exception)
+  }
 
-        val newState = if (timings.globalThrottling.isDefined || timings.perScenarioThrottlings.nonEmpty) {
-          logger.debug("Setting up throttling")
-          throttler = new Throttler(timings.globalThrottling, timings.perScenarioThrottlings)
-          scheduler.schedule(0 seconds, 1 seconds, self, OneSecondTick)
-          throttling.orElse(initialized)
-        } else
-          initialized
+  private def stop(endData: EndData): State = {
+    endData.initData.launcher ! replyToLauncher(endData)
+    goto(Stopped) using NoData
+  }
 
-        context.become(newState)
+  when(WaitingForResourcesToStop) {
+    case Event(StatsEngineStopped, data: EndData) =>
+      logger.info("StatsEngineStopped")
+      stop(data)
+
+    case Event(Kill, data: EndData) =>
+      logger.error("Kill")
+      stop(data)
+
+    case Event(message, _) =>
+      logger.debug(s"Ignore message $message while waiting for resources to stop")
+      stay()
+  }
+
+  private def replyToLauncher(endData: EndData): Try[Unit] =
+    endData.exception match {
+      case Some(exception) => Failure(exception)
+      case _               => Success(())
     }
 
-    case m => logger.error(s"Shouldn't happen. Ignore message $m while waiting for DataWriter to initialize")
+  // -- STEP 4 : Controller has been stopped, all new messages will be discarded -- //
+
+  when(Stopped) {
+    case Event(message, NoData) =>
+      logger.debug(s"Ignore message $message since Controller has been stopped")
+      stay()
   }
 
-  val throttling: Receive = {
-    case OneSecondTick                           => throttler.flushBuffer()
-    case ThrottledRequest(scenarioName, request) => throttler.send(scenarioName, request)
-  }
-
-  def initialized: Receive = {
-
-      def dispatchUserEndToDataWriter(userMessage: UserMessage): Unit = {
-        logger.info(s"End user #${userMessage.userId}")
-        DataWriter.dispatch(userMessage)
-      }
-
-      def becomeTerminating(exception: Option[Exception]): Unit = {
-        DataWriter.terminate(self)
-        context.become(waitingForDataWriterToTerminate(exception))
-      }
-
-    {
-      case userMessage @ UserMessage(_, userId, event, _, _) => event match {
-        case Start =>
-          activeUsers += userId -> userMessage
-          logger.info(s"Start user #${userMessage.userId}")
-          DataWriter.dispatch(userMessage)
-
-        case End =>
-          finishedUsers += 1
-          activeUsers -= userId
-          dispatchUserEndToDataWriter(userMessage)
-          if (finishedUsers == totalNumberOfUsers)
-            becomeTerminating(None)
-      }
-
-      case ForceTermination(exception) =>
-        // flush all active users
-        val now = nowMillis
-        for (activeUser <- activeUsers.values) {
-          dispatchUserEndToDataWriter(activeUser.copy(event = End, endDate = now))
-        }
-        becomeTerminating(exception)
-    }
-  }
-
-  def waitingForDataWriterToTerminate(exception: Option[Exception]): Receive = {
-    case DataWritersTerminated(result) =>
-      exception match {
-        case Some(e) => launcher ! SFailure(e)
-        case _       => launcher ! SSuccess(runId)
-      }
-    case m => logger.debug(s"Ignore message $m while waiting for DataWriter to terminate")
-  }
-
-  def receive = uninitialized
+  initialize()
 }

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.config
 
 import scala.collection.mutable
@@ -23,41 +24,45 @@ class GatlingPropertiesBuilder {
 
   private val props = mutable.Map.empty[String, Any]
 
-  def mute(): Unit =
-    props += core.Mute -> true
-
-  def noReports(): Unit =
+  def noReports(): GatlingPropertiesBuilder = {
     props += charting.NoReports -> true
+    this
+  }
 
-  def reportsOnly(v: String): Unit =
+  def reportsOnly(v: String): GatlingPropertiesBuilder = {
     props += core.directory.ReportsOnly -> v
+    this
+  }
 
-  def dataDirectory(v: String): Unit =
-    props += core.directory.Data -> v
+  def resourcesDirectory(v: String): GatlingPropertiesBuilder = {
+    props += core.directory.Resources -> v
+    this
+  }
 
-  def resultsDirectory(v: String): Unit =
+  def resultsDirectory(v: String): GatlingPropertiesBuilder = {
     props += core.directory.Results -> v
+    this
+  }
 
-  def requestBodiesDirectory(v: String): Unit =
-    props += core.directory.RequestBodies -> v
-
-  def sourcesDirectory(v: String): Unit =
+  def simulationsDirectory(v: String): GatlingPropertiesBuilder = {
     props += core.directory.Simulations -> v
+    this
+  }
 
-  def binariesDirectory(v: String): Unit =
+  def binariesDirectory(v: String): GatlingPropertiesBuilder = {
     props += core.directory.Binaries -> v
+    this
+  }
 
-  def simulationClass(v: String): Unit =
+  def simulationClass(v: String): GatlingPropertiesBuilder = {
     props += core.SimulationClass -> v
+    this
+  }
 
-  def outputDirectoryBaseName(v: String): Unit =
-    props += core.OutputDirectoryBaseName -> v
-
-  def runDescription(v: String): Unit =
+  def runDescription(v: String): GatlingPropertiesBuilder = {
     props += core.RunDescription -> v
+    this
+  }
 
-  def disableCompiler(): Unit =
-    props += core.DisableCompiler -> true
-
-  def build = props
+  def build: mutable.Map[String, Any] = props
 }

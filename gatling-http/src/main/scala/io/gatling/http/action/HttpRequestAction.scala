@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,81 +13,58 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.action
 
-import com.typesafe.scalalogging.slf4j.StrictLogging
-
-import akka.actor.{ ActorRef, ActorContext }
-import akka.actor.ActorDSL.actor
-import io.gatling.core.result.writer.DataWriterClient
-import io.gatling.core.session.Session
-import io.gatling.core.util.TimeHelper.nowMillis
-import io.gatling.core.validation._
-import io.gatling.http.ahc.{ HttpEngine, HttpTx }
-import io.gatling.http.cache.{ PermanentRedirect, CacheHandling }
-import io.gatling.http.fetch.ResourceFetcher
+import io.gatling.commons.util.Clock
+import io.gatling.commons.validation._
+import io.gatling.core.CoreComponents
+import io.gatling.core.action.{ Action, RequestAction }
+import io.gatling.core.session.{ Expression, Session }
+import io.gatling.core.stats.StatsEngine
+import io.gatling.core.util.NameGen
+import io.gatling.http.engine.tx.{ HttpTx, HttpTxExecutor }
 import io.gatling.http.request.HttpRequestDef
 import io.gatling.http.response._
-
-object HttpRequestAction extends DataWriterClient with StrictLogging {
-
-  def startHttpTransaction(origTx: HttpTx, httpEngine: HttpEngine = HttpEngine.instance)(implicit ctx: ActorContext): Unit = {
-
-      def startHttpTransaction(tx: HttpTx): Unit = {
-        logger.info(s"Sending request=${tx.request.requestName} uri=${tx.request.ahcRequest.getURI}: scenario=${tx.session.scenarioName}, userId=${tx.session.userId}")
-        httpEngine.startHttpTransaction(tx)
-      }
-
-    val tx = PermanentRedirect.getRedirect(origTx)
-    val uri = tx.request.ahcRequest.getURI
-    val protocol = tx.request.config.protocol
-
-    CacheHandling.getExpire(protocol, tx.session, uri) match {
-
-      case None =>
-        startHttpTransaction(tx)
-
-      case Some(expire) if nowMillis > expire =>
-        val newTx = tx.copy(session = CacheHandling.clearExpire(tx.session, uri))
-        startHttpTransaction(newTx)
-
-      case _ =>
-        ResourceFetcher.resourceFetcherForCachedPage(uri, tx) match {
-          case Some(resourceFetcher) =>
-            logger.info(s"Fetching resources of cached page request=${tx.request.requestName} uri=$uri: scenario=${tx.session.scenarioName}, userId=${tx.session.userId}")
-            actor(resourceFetcher())
-
-          case None =>
-            logger.info(s"Skipping cached request=${tx.request.requestName} uri=${tx.request.ahcRequest.getURI}: scenario=${tx.session.scenarioName}, userId=${tx.session.userId}")
-            tx.next ! tx.session
-        }
-    }
-  }
-}
 
 /**
  * This is an action that sends HTTP requests
  *
- * @constructor constructs an HttpRequestAction
- * @param httpRequestDef the request definition
- * @param next the next action that will be executed after the request
  */
-class HttpRequestAction(httpRequestDef: HttpRequestDef, val next: ActorRef) extends RequestAction {
+class HttpRequestAction(
+    httpRequestDef: HttpRequestDef,
+    httpTxExecutor: HttpTxExecutor,
+    coreComponents: CoreComponents,
+    val next:       Action
+)
+  extends RequestAction with NameGen {
 
   import httpRequestDef._
 
-  val responseBuilderFactory = ResponseBuilder.newResponseBuilderFactory(config.checks, config.responseTransformer, config.protocol)
-  val requestName = httpRequestDef.requestName
+  override def clock: Clock = coreComponents.clock
 
-  def sendRequest(requestName: String, session: Session): Validation[Unit] =
+  override val name: String = genName("httpRequest")
+
+  override def requestName: Expression[String] = httpRequestDef.requestName
+
+  override def statsEngine: StatsEngine = coreComponents.statsEngine
+
+  private val responseBuilderFactory = ResponseBuilder.newResponseBuilderFactory(
+    requestConfig.checks,
+    requestConfig.httpProtocol.responsePart.inferHtmlResources,
+    clock,
+    coreComponents.configuration
+  )
+
+  override def sendRequest(requestName: String, session: Session): Validation[Unit] =
     httpRequestDef.build(requestName, session).map { httpRequest =>
-
       val tx = HttpTx(
         session,
         httpRequest,
         responseBuilderFactory,
-        next: ActorRef)
+        next
+      )
 
-      HttpRequestAction.startHttpTransaction(tx)
+      httpTxExecutor.execute(tx)
     }
 }

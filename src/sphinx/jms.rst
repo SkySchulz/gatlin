@@ -4,17 +4,16 @@
 JMS
 ###
 
-JMS support was initially contributed by Jason Koch.
+JMS support was initially contributed by `Jason Koch <https://github.com/jasonk000>`_.
 
 Prerequisites
 =============
 
-Gatling JMS DSL is not available by default.
+Gatling JMS DSL is not imported by default.
 
-One has to manually add the following imports::
+One has to manually add the following imports:
 
-  import io.gatling.jms.Predef._
-  import javax.jms._
+.. includecode:: code/JmsSample.scala#imports
 
 JMS Protocol
 ============
@@ -23,13 +22,25 @@ JMS Protocol
 
 Use the ``jms`` object in order to create a JMS protocol.
 
+* ``connectionFactory``: mandatory, an instance of `ConnectionFactory`. Use `jmsJndiConnectionFactory`_ to obtain one via JNDI lookup or create it by yourself.
+* ``credentials``: optional, to create a JMS connection
+* ``useNonPersistentDeliveryMode`` / ``usePersistentDeliveryMode``: optional, default to non persistent
+* ``matchByMessageId`` / ``matchByCorrelationId`` / ``messageMatcher``: specify how request and response messages should be matched, default to ``matchByMessageId``. Use ``matchByCorrelationId`` for ActiveMQ.
+* ``replyTimeout``: optional reply timeout, in milliseconds, default is none
+* ``listenerThreadCount``: optional listener thread count, some JMS implementation (like IBM MQ) need more than on MessageListener to achieve full readout performance
+
+JMS JNDI Connection Factory
+===========================
+
+Use `jmsJndiConnectionFactory` object to obtain an instance of JMS `ConnectionFactory` via JNDI lookup.
+
+.. _jmsJndiConnectionFactory:
+
 * ``connectionFactoryName``: mandatory
 * ``url``: mandatory
 * ``contextFactory``: mandatory
-* ``credentials``: optional
-* ``listenerCount``: the number of ReplyConsumers. mandatory (> 0)
-* ``useNonPersistentDeliveryMode`` / ``usePersistentDeliveryMode``: optional, default to non persistent
-* ``matchByMessageID`` / ``matchByCorrelationID`` / ``messageMatcher``: specify how request and response messages should be matched, default to matchByMessageID. Use matchByCorrelationID for ActiveMQ.
+* ``credentials``: optional, for performing JNDI lookup
+* ``property``: optional, custom JNDI property
 
 JMS Request API
 ===============
@@ -41,16 +52,22 @@ Use the ``jms("requestName")`` method in order to create a JMS request.
 Request Type
 ------------
 
-Currently, only ``reqreply`` request type is supported.
+Currently, ``requestReply`` and ``send`` (fire and forget) requests are supported.
+
+.. _jms-destination:
 
 Destination
 -----------
 
 Define the target destination with ``queue("queueName")`` or alternatively with ``destination(JmsDestination)``
 
-Optionally define reply destination with ``replyQueue("responseQueue")`` or ``replyDestination(JmsDestination)`` if not defined dynamic queue will be used.
+Optionally define reply destination with ``replyQueue("responseQueue")`` or ``replyDestination(JmsDestination)``, otherwise a dynamic queue will be used.
+If you do so, you have to possibility of not setting the `JMSReplyTo` header with ``noJmsReplyTo``.
 
 Additionally for reply destination JMS selector can be defined with ``selector("selector")``
+
+If you have the need, to measure the time when a message arrive at a different message queue then the ``replyDestination(JmsDestination)``
+you can additional define a ``trackerDestination(JmsDestination)``.
 
 
 Message Matching
@@ -68,15 +85,24 @@ Message
 * ``mapMessage(Expression[Map[String, Any]])``
 * ``objectMessage(Expression[java.io.Serializable])``
 
+.. _jms-props:
+
 Properties
 ----------
 
 One can send additional properties with ``property(Expression[String], Expression[Any])``.
 
+.. _jms-type:
+
+JMS Type
+--------
+
+Jms type can be specified with ``jmsType(Expression[String])``.
+
+.. _jms-check:
+
 JMS Check API
 =============
-
-.. _jms-api:
 
 JMS checks are very basic for now.
 
@@ -89,42 +115,6 @@ Additionally you can define your custom check that implements ``Check[javax.jms.
 Example
 =======
 
-Short example, assuming FFMQ on localhost, using a reqreply query, to the queue named "jmstestq"::
+Short example, assuming FFMQ on localhost, using a reqreply query, to the queue named "jmstestq":
 
-  import net.timewalker.ffmq3.FFMQConstants
-  import io.gatling.core.Predef._
-  import io.gatling.jms.Predef._
-  import javax.jms._
-  import scala.concurrent.duration._
-
-  class TestJmsDsl extends Simulation {
-
-    val jmsConfig = JmsProtocolBuilder.default
-      .connectionFactoryName(FFMQConstants.JNDI_CONNECTION_FACTORY_NAME)
-      .url("tcp://localhost:10002")
-      .credentials("user", "secret")
-      .contextFactory(FFMQConstants.JNDI_CONTEXT_FACTORY)
-      .listenerCount(1)
-      .usePersistentDeliveryMode
-
-    val scn = scenario("JMS DSL test").repeat(1) {
-      exec(jms("req reply testing").reqreply
-      .queue("jmstestq")
-      .textMessage("hello from gatling jms dsl")
-      .property("test_header", "test_value")
-      .check(simpleCheck(checkBodyTextCorrect))
-      )
-    }
-
-    setUp(scn.inject(rampUsersPerSec(10) to (1000) during (2 minutes)))
-      .protocols(jmsConfig)
-
-    def checkBodyTextCorrect(m: Message) = {
-      // this assumes that the service just does an "uppercase" transform on the text
-      m match {
-      case tm: TextMessage => tm.getText.toString == "HELLO FROM GATLING JMS DSL"
-      case _ => false
-      }
-    }
-  }
-
+.. includecode:: code/JmsSample.scala#example-simulation

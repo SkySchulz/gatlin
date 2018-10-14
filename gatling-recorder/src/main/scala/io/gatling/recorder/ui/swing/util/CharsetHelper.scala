@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.ui.swing.util
 
 import java.nio.charset.Charset
 
-import com.typesafe.scalalogging.slf4j.StrictLogging
+import com.typesafe.scalalogging.StrictLogging
 
-object CharsetHelper extends StrictLogging {
+private[swing] object CharsetHelper extends StrictLogging {
   type Label = String
   type Name = String
 
@@ -48,7 +49,8 @@ object CharsetHelper extends StrictLogging {
     "ISO-8859-9" -> "Turkish Latin-5 (ISO-8859-9)",
     "windows-1254" -> "Turkish (Windows-1254)",
     "windows-1258" -> "Vietnamese (Windows-1258)",
-    "ISO-8859-15" -> "West European Latin-9 (ISO-8859-15)")
+    "ISO-8859-15" -> "West European Latin-9 (ISO-8859-15)"
+  )
     .filter {
       case (name, label) =>
         val supported = Charset.isSupported(name)

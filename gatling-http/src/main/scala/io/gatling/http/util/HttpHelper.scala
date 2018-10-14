@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,32 +13,37 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.util
 
-import java.net.{ URI, URLDecoder }
+import java.net.URLDecoder
+import java.nio.charset.{ Charset, StandardCharsets }
 
-import scala.collection.breakOut
+import scala.collection.{ BitSet, breakOut }
+import scala.collection.JavaConverters._
 import scala.io.Codec.UTF8
+import scala.util.Try
+import scala.util.control.NonFatal
 
-import com.ning.http.client.{ FluentCaseInsensitiveStringsMap, Realm }
-import com.ning.http.client.Realm.AuthScheme
-import com.ning.http.util.AsyncHttpProviderUtils
-import com.typesafe.scalalogging.slf4j.StrictLogging
-
-import io.gatling.core.session.{ Expression, Session }
+import io.gatling.core.session._
+import io.gatling.http.client.ahc.uri.Uri
+import io.gatling.http.client.realm.{ BasicRealm, DigestRealm, Realm }
 import io.gatling.http.{ HeaderNames, HeaderValues }
+
+import io.netty.handler.codec.http.{ HttpHeaders, HttpResponseStatus }
+import io.netty.handler.codec.http.HttpResponseStatus._
+import com.typesafe.scalalogging.StrictLogging
+import io.netty.handler.codec.http.cookie.{ ClientCookieDecoder, Cookie }
 
 object HttpHelper extends StrictLogging {
 
   val HttpScheme = "http"
-  val HttpsScheme = "https"
   val WsScheme = "ws"
-  val WssScheme = "wss"
-  val OkCodes = Vector(200, 304, 201, 202, 203, 204, 205, 206, 207, 208, 209)
-  val RedirectStatusCodes = Vector(301, 302, 303, 307, 308)
+  val OkCodes: BitSet = BitSet.empty + OK.code + SEE_OTHER.code + CREATED.code + ACCEPTED.code + NON_AUTHORITATIVE_INFORMATION.code + NO_CONTENT.code + RESET_CONTENT.code + PARTIAL_CONTENT.code + MULTI_STATUS.code + 208 + 209
+  private val RedirectStatusCodes = BitSet.empty + MOVED_PERMANENTLY.code + FOUND.code + SEE_OTHER.code + TEMPORARY_REDIRECT.code + PERMANENT_REDIRECT.code
 
   def parseFormBody(body: String): List[(String, String)] = {
-      def utf8Decode(s: String) = URLDecoder.decode(s, UTF8.name)
+    def utf8Decode(s: String) = URLDecoder.decode(s, UTF8.name)
 
     body
       .split("&")
@@ -50,43 +55,93 @@ object HttpHelper extends StrictLogging {
       }(breakOut)
   }
 
-  def buildBasicAuthRealm(username: Expression[String], password: Expression[String]) = buildRealm(username, password, AuthScheme.BASIC, preemptive = true)
-  def buildDigestAuthRealm(username: Expression[String], password: Expression[String]) = buildRealm(username, password, AuthScheme.DIGEST, preemptive = false)
-  def buildRealm(username: Expression[String], password: Expression[String], authScheme: AuthScheme, preemptive: Boolean): Expression[Realm] = (session: Session) =>
-    for {
-      usernameValue <- username(session)
-      passwordValue <- password(session)
-    } yield buildRealm(usernameValue, passwordValue, authScheme, preemptive)
+  def buildBasicAuthRealm(username: Expression[String], password: Expression[String]): Expression[Realm] =
+    (session: Session) =>
+      for {
+        usernameValue <- username(session)
+        passwordValue <- password(session)
+      } yield new BasicRealm(usernameValue, passwordValue)
 
-  def buildBasicAuthRealm(username: String, password: String) = buildRealm(username, password, AuthScheme.BASIC, preemptive = true)
-  def buildRealm(username: String, password: String, authScheme: AuthScheme, preemptive: Boolean): Realm = new Realm.RealmBuilder().setPrincipal(username).setPassword(password).setUsePreemptiveAuth(preemptive).setScheme(authScheme).build
+  def buildDigestAuthRealm(username: Expression[String], password: Expression[String]): Expression[Realm] =
+    (session: Session) =>
+      for {
+        usernameValue <- username(session)
+        passwordValue <- password(session)
+      } yield new DigestRealm(usernameValue, passwordValue)
 
-  def isCss(headers: FluentCaseInsensitiveStringsMap) = Option(headers.getFirstValue(HeaderNames.ContentType)).exists(_.contains(HeaderValues.TextCss))
-  def isHtml(headers: FluentCaseInsensitiveStringsMap) = Option(headers.getFirstValue(HeaderNames.ContentType)).exists(ct => ct.contains(HeaderValues.TextHhtml) || ct.contains(HeaderValues.ApplicationXhtml))
-  def isAjax(headers: FluentCaseInsensitiveStringsMap) = Option(headers.getFirstValue(HeaderNames.XRequestedWith)).exists(ct => ct.contains(HeaderValues.XmlHttpRequest))
+  private def headerExists(headers: HttpHeaders, headerName: String, f: String => Boolean): Boolean = Option(headers.get(headerName)).exists(f)
+  def isCss(headers: HttpHeaders): Boolean = headerExists(headers, HeaderNames.ContentType, _.contains(HeaderValues.TextCss))
+  def isHtml(headers: HttpHeaders): Boolean = headerExists(headers, HeaderNames.ContentType, ct => ct.contains(HeaderValues.TextHtml) || ct.contains(HeaderValues.ApplicationXhtml))
+  def isAjax(headers: HttpHeaders): Boolean = headerExists(headers, HeaderNames.XRequestedWith, _.contains(HeaderValues.XmlHttpRequest))
+  def isTxt(headers: HttpHeaders): Boolean = headerExists(headers, HeaderNames.ContentType, ct => ct.contains("text") || ct.contains("json") || ct.contains("javascript") || ct.contains("xml"))
 
-  def resolveFromURI(rootURI: URI, relative: String): URI =
+  def resolveFromUri(rootURI: Uri, relative: String): Uri =
     if (relative.startsWith("//"))
-      new URI(rootURI.getScheme + ":" + relative)
+      Uri.create(rootURI.getScheme + ":" + relative)
     else
-      AsyncHttpProviderUtils.getRedirectUri(rootURI, relative)
+      Uri.create(rootURI, relative)
 
-  def resolveFromURISilently(rootURI: URI, relative: String): Option[URI] =
+  def resolveFromUriSilently(rootURI: Uri, relative: String): Option[Uri] =
     try {
-      Some(resolveFromURI(rootURI, relative))
+      Some(resolveFromUri(rootURI, relative))
     } catch {
-      case e: Exception =>
+      case NonFatal(e) =>
         logger.info(s"Failed to resolve URI rootURI='$rootURI', relative='$relative'", e)
         None
     }
 
-  def isRedirect(statusCode: Int) = RedirectStatusCodes.contains(statusCode)
-  def isPermanentRedirect(statusCode: Int): Boolean = statusCode == 301 || statusCode == 308
-  def isNotModified(statusCode: Int) = statusCode == 304
+  def isOk(statusCode: Int): Boolean = OkCodes.contains(statusCode)
+  def isRedirect(status: HttpResponseStatus): Boolean = RedirectStatusCodes.contains(status.code)
+  def isPermanentRedirect(status: HttpResponseStatus): Boolean = status == MOVED_PERMANENTLY || status == PERMANENT_REDIRECT
+  def isNotModified(status: HttpResponseStatus): Boolean = status == NOT_MODIFIED
 
-  def isSecure(uri: URI) = uri.getScheme == HttpsScheme || uri.getScheme == WssScheme
+  def isAbsoluteHttpUrl(url: String): Boolean = url.startsWith(HttpScheme)
+  def isAbsoluteWsUrl(url: String): Boolean = url.startsWith(WsScheme)
 
-  def isAbsoluteHttpUrl(url: String) = url.startsWith(HttpScheme)
-  def isAbsoluteWsUrl(url: String) = url.startsWith(WsScheme)
+  def extractCharsetFromContentType(contentType: String): Option[Charset] =
+    contentType.indexOf("charset=") match {
+      case -1 => None
+
+      case s =>
+        var start = s + "charset=".length
+
+        if (contentType.regionMatches(true, start, "UTF-8", 0, 5)) {
+          // minor optim, bypass lookup for most common
+          Some(StandardCharsets.UTF_8)
+
+        } else {
+          var end = contentType.indexOf(';', start) match {
+            case -1 => contentType.length
+
+            case e  => e
+          }
+
+          Try {
+            while (contentType.charAt(start) == ' ' && start < end)
+              start += 1
+
+            while (contentType.charAt(end - 1) == ' ' && end > start)
+              end -= 1
+
+            if (contentType.charAt(start) == '"' && start < end)
+              start += 1
+
+            if (contentType.charAt(end - 1) == '"' && end > start)
+              end -= 1
+
+            val charsetString = contentType.substring(start, end)
+
+            Charset.forName(charsetString)
+          }.toOption
+        }
+    }
+
+  def responseCookies(headers: HttpHeaders): List[Cookie] = {
+    val setCookieValues = headers.getAll(HeaderNames.SetCookie)
+    if (setCookieValues.isEmpty) {
+      Nil
+    } else {
+      setCookieValues.asScala.flatMap(setCookie => Option(ClientCookieDecoder.LAX.decode(setCookie)))(breakOut)
+    }
+  }
 }
-

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,28 +13,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.action
 
-import akka.actor.ActorRef
-import io.gatling.core.result.message.KO
-import io.gatling.core.result.writer.DataWriterClient
+import io.gatling.commons.stats.KO
+import io.gatling.commons.util.Clock
 import io.gatling.core.session.{ GroupBlock, Session }
-import io.gatling.core.util.TimeHelper.nowMillis
+import io.gatling.core.stats.StatsEngine
+import io.gatling.core.util.NameGen
 
-class ExitHereIfFailed(val next: ActorRef) extends Chainable with DataWriterClient {
+class ExitHereIfFailed(exit: Action, statsEngine: StatsEngine, clock: Clock, val next: Action) extends Action with ChainableAction with NameGen {
 
-  def execute(session: Session) {
+  override val name: String = genName("exitHereIfFailed")
 
-    val now = nowMillis
+  override def execute(session: Session): Unit = {
 
-    if (session.status == KO) {
+    val nextStep = session.status match {
+      case KO =>
+        val now = clock.nowMillis
 
-      session.blockStack.foreach {
-        case group: GroupBlock => writeGroupData(session, group, now)
-        case _                 =>
-      }
+        session.blockStack.foreach {
+          case group: GroupBlock => statsEngine.logGroupEnd(session, group, now)
+          case _                 =>
+        }
 
-      UserEnd.instance ! session
-    } else next ! session
+        exit
+
+      case _ => next
+    }
+
+    nextStep.execute(session)
   }
 }

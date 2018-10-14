@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,20 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.config
 
-object ConfigKeys {
+private[recorder] object ConfigKeys {
 
   val ConfigRoot = "recorder"
 
   object core {
+    val Mode = "recorder.core.mode"
     val Encoding = "recorder.core.encoding"
-    val SimulationOutputFolder = "recorder.core.outputFolder"
-    val RequestBodiesFolder = "recorder.core.requestBodiesFolder"
+    val SimulationsFolder = "recorder.core.simulationsFolder"
+    val ResourcesFolder = "recorder.core.resourcesFolder"
     val Package = "recorder.core.package"
     val ClassName = "recorder.core.className"
     val ThresholdForPauseCreation = "recorder.core.thresholdForPauseCreation"
     val SaveConfig = "recorder.core.saveConfig"
+    val Headless = "recorder.core.headless"
+    val HarFilePath = "recorder.core.harFilePath"
   }
   object filters {
     val FilterStrategy = "recorder.filters.filterStrategy"
@@ -37,10 +41,26 @@ object ConfigKeys {
     val AutomaticReferer = "recorder.http.automaticReferer"
     val FollowRedirect = "recorder.http.followRedirect"
     val InferHtmlResources = "recorder.http.inferHtmlResources"
-    val RemoveConditionalCache = "recorder.http.removeConditionalCache"
+    val RemoveCacheHeaders = "recorder.http.removeCacheHeaders"
+    val CheckResponseBodies = "recorder.http.checkResponseBodies"
   }
   object proxy {
     val Port = "recorder.proxy.port"
+
+    object https {
+      val Mode = "recorder.proxy.https.mode"
+
+      object keyStore {
+        val Path = "recorder.proxy.https.keyStore.path"
+        val Password = "recorder.proxy.https.keyStore.password"
+        val Type = "recorder.proxy.https.keyStore.type"
+      }
+
+      object certificateAuthority {
+        val CertificatePath = "recorder.proxy.https.certificateAuthority.certificatePath"
+        val PrivateKeyPath = "recorder.proxy.https.certificateAuthority.privateKeyPath"
+      }
+    }
 
     object outgoing {
       val Host = "recorder.proxy.outgoing.host"
@@ -50,5 +70,10 @@ object ConfigKeys {
       val SslPort = "recorder.proxy.outgoing.sslPort"
     }
   }
-
+  object netty {
+    val MaxInitialLineLength = "recorder.netty.maxInitialLineLength"
+    val MaxHeaderSize = "recorder.netty.maxHeaderSize"
+    val MaxChunkSize = "recorder.netty.maxChunkSize"
+    val MaxContentLength = "recorder.netty.maxContentLength"
+  }
 }

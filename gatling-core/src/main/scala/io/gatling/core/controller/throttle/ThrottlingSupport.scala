@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,61 +13,77 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.controller.throttle
 
 import scala.annotation.tailrec
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration._
 
-trait ThrottleStep {
+sealed trait ThrottleStep {
 
   val durationInSec: Long
   def target(previousLastValue: Int): Int
   def rps(time: Long, previousLastValue: Int): Int
 }
 
-case class ReachIntermediate(target: Int, history: List[ThrottleStep]) {
-  def in(duration: Duration) = ThrottlingBuilder(Reach(target, duration) :: history)
+case class ReachIntermediate(target: Int) {
+  def in(duration: FiniteDuration) = Reach(target, duration)
 }
 
-case class Reach(target: Int, duration: Duration) extends ThrottleStep {
-  val durationInSec = duration.toSeconds
-  def target(previousLastValue: Int) = target
-  def rps(time: Long, previousLastValue: Int): Int = ((target - previousLastValue) * time / durationInSec + previousLastValue).toInt
+case class Reach(target: Int, duration: FiniteDuration) extends ThrottleStep {
+  override val durationInSec: Long = duration.toSeconds
+  override def target(previousLastValue: Int): Int = target
+  override def rps(time: Long, previousLastValue: Int): Int = (previousLastValue + (target - previousLastValue) * (time + 1) / durationInSec).toInt
 }
 
-case class Hold(duration: Duration) extends ThrottleStep {
-  val durationInSec = duration.toSeconds
-  def target(previousLastValue: Int) = previousLastValue
-  def rps(time: Long, previousLastValue: Int) = previousLastValue
+case class Hold(duration: FiniteDuration) extends ThrottleStep {
+  override val durationInSec: Long = duration.toSeconds
+  override def target(previousLastValue: Int): Int = previousLastValue
+  override def rps(time: Long, previousLastValue: Int): Int = previousLastValue
 }
 
 case class Jump(target: Int) extends ThrottleStep {
-  val durationInSec = 0L
-  def target(previousLastValue: Int) = target
-  def rps(time: Long, previousLastValue: Int) = 0
+  override val durationInSec: Long = 0L
+  override def target(previousLastValue: Int): Int = target
+  override def rps(time: Long, previousLastValue: Int) = 0
 }
 
 trait ThrottlingSupport {
-  def steps: List[ThrottleStep] = Nil
-  def reachRps(target: Int) = ReachIntermediate(target, steps)
-  def holdFor(duration: Duration) = ThrottlingBuilder(Hold(duration) :: steps)
-  def jumpToRps(target: Int) = ThrottlingBuilder(Jump(target) :: steps)
+  def reachRps(target: Int) = ReachIntermediate(target)
+  def holdFor(duration: FiniteDuration) = Hold(duration)
+  def jumpToRps(target: Int) = Jump(target)
 }
 
-case class ThrottlingBuilder(override val steps: List[ThrottleStep]) extends ThrottlingSupport {
+case class Throttlings(global: Option[Throttling], perScenario: Map[String, Throttling])
 
-  def build: (Long => Int) = {
-      @tailrec
-      def valueAt(steps: List[ThrottleStep], pendingTime: Long, previousLastValue: Int): Int = steps match {
-        case Nil => Int.MaxValue
-        case head :: tail =>
-          if (pendingTime < head.durationInSec)
-            head.rps(pendingTime, previousLastValue)
-          else
-            valueAt(tail, pendingTime - head.durationInSec, head.target(previousLastValue))
+object Throttling {
+
+  @tailrec
+  private def valueAt(steps: List[ThrottleStep], pendingTime: Long, previousLastValue: Int): Int = steps match {
+    case Nil => 0
+    case head :: tail =>
+      if (pendingTime < head.durationInSec)
+        head.rps(pendingTime, previousLastValue)
+      else
+        valueAt(tail, pendingTime - head.durationInSec, head.target(previousLastValue))
+  }
+
+  def apply(steps: Iterable[ThrottleStep]): Throttling = {
+
+    val reversedSteps = steps.toList
+    val limit: (Long => Int) = (now: Long) => valueAt(reversedSteps, now, 0)
+
+    val duration: FiniteDuration =
+      steps.foldLeft(Duration.Zero) { (acc, step) =>
+        step match {
+          case Reach(_, d) => acc + d
+          case Hold(d)     => acc + d
+          case _           => acc
+        }
       }
 
-    val reversedSteps = steps.reverse
-    (now: Long) => valueAt(reversedSteps, now, 0)
+    Throttling(limit, duration)
   }
 }
+
+case class Throttling(limit: Long => Int, duration: FiniteDuration)

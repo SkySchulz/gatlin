@@ -11,15 +11,20 @@ Global menu points to consolidated statistics.
 
 Details menu points to per-request-type statistics.
 
-.. note:: Reports can be generated from the simulation.log file even if the scenario was interrupted (Ctrl+C ou process killed), use the ``-ro`` option.
+.. note:: You can use the ``-ro`` option to generate reports from a truncated simulation.log file, for example when the run was interrupted (Ctrl+C or process killed).
+          Note that the component in charge of logging into the simulation.log file uses a buffer, so last data might be missing if you forcefully interrupt.
           See :ref:`Configuration page <gatling-cli-options>`.
 
+Overall Simulation charts
+=========================
+
+Most of those charts are available for both the overall simulation report and for per request/group charts.
+
 Indicators
-==========
+----------
 
 .. image:: img/reports/charts-indicators.png
-	:alt: DetailsIndicators
-	:scale: 70
+    :alt: DetailsIndicators
 
 This chart shows how response times are distributed among standard ranges.
 The right panel show number of OK/KO requests.
@@ -27,86 +32,73 @@ The right panel show number of OK/KO requests.
 .. note:: these ranges can be configured in the ``gatling.conf`` file.
 
 .. image:: img/reports/charts-statistics.png
-	:alt: Statistics
-	:scale: 70
+    :alt: Statistics
 
 The top panel shows some standard statistics such as min, max, average, standard deviation and percentiles globally and per request.
 
 .. note:: these percentiles can be configured in the ``gatling.conf`` file.
 
+.. note:: If your scenario contains groups, this panel becomes a tree : each group is a non leaf node, and each request is a descendant leaf of a group. Group timings are by default the cumulated response times of all elements inside the group. Group duration can be displayed instead of group cumulated response time by editing the ``gatling.conf`` file.
+
 The bottom panel shows some details on the failed requests.
 
-Active sessions over time
-=========================
+Active users over time
+----------------------
 
-.. image:: img/reports/charts-sessions.png
-	:alt: ActiveSessions
-	:scale: 70
+.. image:: img/reports/charts-users.png
+    :alt: ActiveUsers
 
-This chart displays the active users along the simulation : total and per scenario.
+This chart displays the active users during the simulation : total and per scenario.
+"Active users" tries to represent a mix of arrival rate (input for open workload model) and number of concurrent users (input for closed workload model).
+It's computed as::
+
+    (number of alive users at previous second)
+    + (number of users that were started during this second)
+    - (number of users that were terminated during previous second)
+
 
 Response time distribution
-==========================
+--------------------------
 
 .. image:: img/reports/charts-distrib.png
-	:alt: ReponseTimeDistrib
-	:scale: 70
+    :alt: ResponseTimeDistribution
 
 This chart displays the distribution of the response times.
 
+Response time percentiles over time
+-----------------------------------
+
+.. image:: img/reports/charts-response-percentiles-per-sec.png
+    :alt: ResponseTimePercentilesPerSecond
+
+This charts displays a variety of response time percentiles over time, but only for successful requests.
+As failed requests can end prematurely or be caused by timeouts, they would have a drastic effect on the percentiles computation.
+
 Requests per second over time
-=============================
+-----------------------------
 
 .. image:: img/reports/charts-requests-per-sec.png
-	:alt: RequestsPerSecond
-	:scale: 70
+    :alt: RequestsPerSecond
 
-This chart displays the number of requests per second over time : total, successes and failures.
+This chart displays the number of requests sent per second over time.
 
-Total transactions per second over time
-=======================================
+Responses per second over time
+------------------------------
 
-.. image:: img/reports/charts-transactions-per-sec.png
-	:alt: TransactionsPerSecond
-	:scale: 70
+.. image:: img/reports/charts-responses-per-sec.png
+    :alt: TransactionsPerSecond
 
-This chart displays the number of response received per second over time : total, successes and failures.
+This chart displays the number of responses received per second over time : total, successes and failures.
 
+Request/group specific charts
+=============================
 
-Response Time over time
-=======================
+Those charts are only available when consulting the details for a request/group.
 
-.. image:: img/reports/charts-response-time.png
-	:alt: ResponseTimeOverTime
-	:scale: 70
+Response Time against Global RPS
+--------------------------------
 
-The response time is the duration between the beginning of the request emission and the end of the response reception.
-This chart shows the response time distribution over time for the given request.
+.. image:: img/reports/charts-response-time-global-rps.png
+    :alt: ResponseTimeOverLoad
 
-Latency over time
-=================
-
-.. image:: img/reports/charts-latency.png
-	:alt: LatencyOverTime
-	:scale: 70
-
-The latency is the duration between the end of the request emission and the beginning of the response reception.
-This chart shows the latency distribution over time for the given request.
-
-Response Time over load
-=======================
-
-.. image:: img/reports/charts-response-time-over-load.png
-	:alt: ResponseTimeOverLoad
-	:scale: 70
-
-This chart shows how the response time for the given request is distributed, depending on the total load of the application at the same time.
-
-Latency over load
-=================
-
-.. image:: img/reports/charts-latency-over-load.png
-	:alt: LatencyOverLoad
-	:scale: 70
-
-This chart shows how the latency for the given request is distributed, depending on the total load of the application at the same time.
+This chart shows how the response time for the given request is distributed, depending on the overall number of request at the same time.

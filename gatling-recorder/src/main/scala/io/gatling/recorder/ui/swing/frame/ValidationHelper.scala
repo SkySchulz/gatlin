@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.ui.swing.frame
 
 import java.awt.Color
@@ -20,23 +21,22 @@ import java.awt.Color
 import scala.collection.mutable
 import scala.swing._
 import scala.swing.Swing.MatteBorder
-import scala.swing.event.KeyReleased
 import scala.util.Try
 
-import io.gatling.core.util.StringHelper.RichString
+import io.gatling.commons.util.StringHelper.RichString
 
-object ValidationHelper {
+private[swing] object ValidationHelper {
 
   case class Validator(
-    condition: String => Boolean,
-    successCallback: Component => Unit = setStandardBorder,
-    failureCallback: Component => Unit = setErrorBorder,
-    alwaysValid: Boolean = false)
+      condition:       String => Boolean,
+      successCallback: Component => Unit = setStandardBorder,
+      failureCallback: Component => Unit = setErrorBorder,
+      alwaysValid:     Boolean           = false
+  )
 
-  def keyReleased(c: Component) = KeyReleased(c, null, 0, null)(null)
-
-  private val standardBorder = new TextField().border
-  private val errorBorder = MatteBorder(2, 2, 2, 2, Color.red)
+  // Those are lazy vals to avoid unneccessary component creation when they're not needed (e.g. tests)
+  private lazy val standardBorder = new TextField().border
+  private lazy val errorBorder = MatteBorder(2, 2, 2, 2, Color.red)
 
   /* Default validators */
   private val portRange = 0 to 65536
@@ -73,6 +73,11 @@ object ValidationHelper {
       status += (field -> (validator.alwaysValid || isValid))
     case None =>
       throw new IllegalStateException(s"No validator registered for component : $field")
+  }
+
+  def allValid = {
+    validators.keys.map(updateValidationStatus)
+    validationStatus
   }
 
   def validationStatus = status.values.forall(identity)

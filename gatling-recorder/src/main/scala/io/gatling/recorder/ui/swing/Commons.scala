@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,13 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.ui.swing
 
 import scala.swing.Swing.Icon
 
-object Commons {
-  val LogoSmall = Icon(getClass.getResource("img/logo_small.png"))
+private[swing] object Commons {
 
-  private val IconsFiles = List("img/fav_small.png", "img/fav_big.png", "img/picto_small.png", "img/picto_big.png")
-  val IconList = IconsFiles.map(getClass.getResource).map(Icon(_).getImage)
+  val Logo = Icon(getClass.getResource("images/logo-267x85.png"))
+
+  private val AvailableIconsResolutions = List("16x16", "32x32", "128x128", "256x256")
+  val IconList = AvailableIconsResolutions.map(resolution => getClass.getResource(s"images/icon-$resolution.png"))
+    .map(Icon(_).getImage)
 }

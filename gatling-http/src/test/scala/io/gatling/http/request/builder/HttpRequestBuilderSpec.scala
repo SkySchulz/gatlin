@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,51 +13,81 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.request.builder
 
-import java.net.URI
+import scala.collection.JavaConverters._
 
-import com.ning.http.client.{ Request, RequestBuilderBase, SignatureCalculator }
+import io.gatling.commons.util.DefaultClock
+import io.gatling.{ BaseSpec, ValidationValues }
+import io.gatling.core.CoreComponents
 import io.gatling.core.config.GatlingConfiguration
-import io.gatling.core.validation.Success
-import io.gatling.http.config.HttpProtocol
-import org.junit.runner.RunWith
-import org.specs2.mock.Mockito
-import org.specs2.mutable.Specification
-import org.specs2.runner.JUnitRunner
+import io.gatling.core.session._
+import io.gatling.core.session.el._
+import io.gatling.http.cache.HttpCaches
+import io.gatling.http.client.{ HttpClientConfig, Request, SignatureCalculator }
+import io.gatling.http.client.ahc.uri.Uri
+import io.gatling.http.client.body.form.FormUrlEncodedRequestBody
+import io.gatling.http.client.impl.request.WritableRequestBuilder
+import io.gatling.http.protocol.HttpProtocol
 
-@RunWith(classOf[JUnitRunner])
-class HttpRequestBuilderSpec extends Specification with Mockito {
+import akka.actor.ActorSystem
+import io.netty.handler.codec.http.HttpMethod
+import org.mockito.Mockito.when
+
+class HttpRequestBuilderSpec extends BaseSpec with ValidationValues {
 
   // Default config
-  GatlingConfiguration.setUp()
+  private val configuration = GatlingConfiguration.loadForTest()
+  private val clock = new DefaultClock
+  private val coreComponents = mock[CoreComponents]
+  when(coreComponents.configuration).thenReturn(configuration)
+  when(coreComponents.actorSystem).thenReturn(mock[ActorSystem])
+  private val httpCaches = new HttpCaches(coreComponents)
 
-  def mockComonAttributes() = CommonAttributes(_ => Success("attributes"), "method", Right(new URI("http://gatling-tool.org")))
+  private def httpRequestDef(f: HttpRequestBuilder => HttpRequestBuilder) = {
+    val commonAttributes = CommonAttributes("requestName".expressionSuccess, HttpMethod.GET, Right(Uri.create("http://gatling.io")))
+    val builder = f(new HttpRequestBuilder(commonAttributes, HttpAttributes()))
+    builder.build(httpCaches, HttpProtocol(configuration), throttled = false, configuration)
+  }
 
-  "request builder" should {
-    "set signature calculator object" in {
-      var builder = new HttpRequestBuilder(mockComonAttributes(), HttpAttributes())
-      val sigCalc = mock[SignatureCalculator]
-      builder = builder.signatureCalculator(sigCalc)
+  "signature calculator" should "work when passed as a SignatureCalculator instance" in {
+    httpRequestDef(_.sign(new SignatureCalculator {
+      override def sign(request: Request): Unit = request.getHeaders.add("X-Token", "foo")
+    }.expressionSuccess))
+      .build("requestName", Session("scenarioName", 0, clock.nowMillis))
+      .map { httpRequest =>
+        val writableRequest = WritableRequestBuilder.buildRequest(httpRequest.clientRequest, null, new HttpClientConfig, false)
+        writableRequest.getRequest.headers.get("X-Token")
+      }.succeeded shouldBe "foo"
+  }
 
-      val httpRequest = builder.build(HttpProtocol.DefaultHttpProtocol, false)
-      httpRequest.signatureCalculator.get must_== sigCalc
-    }
+  "form" should "work when overriding a value" in {
 
-    "set signature calculator function" in {
-      var builder = new HttpRequestBuilder(mockComonAttributes(), HttpAttributes())
-      val sigCalcFunc = mock[Function3[String, Request, RequestBuilderBase[_], Unit]]
-      builder = builder.signatureCalculator(sigCalcFunc)
+    val form = Map("foo" -> Seq("FOO"), "bar" -> Seq("BAR"))
+    val session = Session("scenarioName", 0, clock.nowMillis).set("form", form).set("formParamToOverride", "bar")
 
-      val httpRequest = builder.build(HttpProtocol.DefaultHttpProtocol, false)
-      val sigCalc = httpRequest.signatureCalculator.get
+    httpRequestDef(_.form("${form}".el).formParam("${formParamToOverride}".el, "BAZ".el))
+      .build("requestName", session)
+      .map(_.clientRequest.getBody.asInstanceOf[FormUrlEncodedRequestBody].getContent.asScala.collect { case param if param.getName == "bar" => param.getValue }).succeeded shouldBe Seq("BAZ")
+  }
 
-      val mockUrl = "mockUrl"
-      val mockRequest = mock[Request]
-      val mockRequestBuilder = mock[RequestBuilderBase[_]]
+  it should "work when passing only formParams" in {
 
-      sigCalc.calculateAndAddSignature(mockUrl, mockRequest, mockRequestBuilder)
-      there was one(sigCalcFunc).apply(mockUrl, mockRequest, mockRequestBuilder)
-    }
+    val session = Session("scenarioName", 0, clock.nowMillis).set("formParam", "bar")
+
+    httpRequestDef(_.formParam("${formParam}".el, "BAR".el))
+      .build("requestName", session)
+      .map(_.clientRequest.getBody.asInstanceOf[FormUrlEncodedRequestBody].getContent.asScala.collect { case param if param.getName == "bar" => param.getValue }).succeeded shouldBe Seq("BAR")
+  }
+
+  it should "work when passing only a form" in {
+
+    val form = Map("foo" -> Seq("FOO"), "bar" -> Seq("BAR"))
+    val session = Session("scenarioName", 0, clock.nowMillis).set("form", form)
+
+    httpRequestDef(_.form("${form}".el))
+      .build("requestName", session)
+      .map(_.clientRequest.getBody.asInstanceOf[FormUrlEncodedRequestBody].getContent.asScala.collect { case param if param.getName == "bar" => param.getValue }).succeeded shouldBe Seq("BAR")
   }
 }

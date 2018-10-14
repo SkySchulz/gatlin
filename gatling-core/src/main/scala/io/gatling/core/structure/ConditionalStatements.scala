@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,10 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.structure
 
-import io.gatling.core.action.builder.{ IfBuilder, RandomSwitchBuilder, RoundRobinSwitchBuilder, SwitchBuilder }
-import io.gatling.core.session.{ Expression, RichExpression, Session }
+import io.gatling.core.action.builder._
+import io.gatling.core.session.{ Expression, Session }
 
 trait ConditionalStatements[B] extends Execs[B] {
 
@@ -29,15 +30,23 @@ trait ConditionalStatements[B] extends Execs[B] {
    */
   def doIf(condition: Expression[Boolean])(thenNext: ChainBuilder): B = doIf(condition, thenNext, None)
 
+  private def equalityCondition(actual: Expression[Any], expected: Expression[Any]): Expression[Boolean] =
+    (session: Session) =>
+      for {
+        expected <- expected(session)
+        actual <- actual(session)
+      } yield expected == actual
+
   /**
    * Method used to add a conditional execution in the scenario
    *
-   * @param sessionKey the key of the session value to be tested for equality
-   * @param value the value to which the session value must be equals
+   * @param actual the real value
+   * @param expected the expected value
    * @param thenNext the chain to be executed if the condition is satisfied
    * @return a new builder with a conditional execution added to its actions
    */
-  def doIf(sessionKey: Expression[String], value: String)(thenNext: ChainBuilder): B = doIf(sessionKey.map(_ == value), thenNext, None)
+  def doIfEquals(actual: Expression[Any], expected: Expression[Any])(thenNext: ChainBuilder): B =
+    doIf(equalityCondition(actual, expected), thenNext, None)
 
   /**
    * Method used to add a conditional execution in the scenario with a fall back
@@ -48,27 +57,21 @@ trait ConditionalStatements[B] extends Execs[B] {
    * @param elseNext the chain to be executed if the condition is not satisfied
    * @return a new builder with a conditional execution added to its actions
    */
-  def doIfOrElse(condition: Expression[Boolean])(thenNext: ChainBuilder)(elseNext: ChainBuilder): B = doIf(condition, thenNext, Some(elseNext))
+  def doIfOrElse(condition: Expression[Boolean])(thenNext: ChainBuilder)(elseNext: ChainBuilder): B =
+    doIf(condition, thenNext, Some(elseNext))
 
   /**
    * Method used to add a conditional execution in the scenario with a fall back
    * action if condition is not satisfied
    *
-   * @param expected the expected value
    * @param actual the real value
+   * @param expected the expected value
    * @param thenNext the chain to be executed if the condition is satisfied
    * @param elseNext the chain to be executed if the condition is not satisfied
    * @return a new builder with a conditional execution added to its actions
    */
-  def doIfEqualsOrElse(expected: Expression[Any], actual: Expression[Any])(thenNext: ChainBuilder)(elseNext: ChainBuilder): B = {
-    val condition = (session: Session) =>
-      for {
-        expected <- expected(session)
-        actual <- actual(session)
-      } yield expected == actual
-
-    doIf(condition, thenNext, Some(elseNext))
-  }
+  def doIfEqualsOrElse(actual: Expression[Any], expected: Expression[Any])(thenNext: ChainBuilder)(elseNext: ChainBuilder): B =
+    doIf(equalityCondition(actual, expected), thenNext, Some(elseNext))
 
   /**
    * Private method that actually adds the If Action to the scenario
@@ -122,7 +125,7 @@ trait ConditionalStatements[B] extends Execs[B] {
    * @return a new builder with a random switch added to its actions
    */
   def randomSwitch(possibilities: (Double, ChainBuilder)*): B = {
-    require(possibilities.size >= 1, "randomSwitch() requires at least 1 possibility")
+    require(possibilities.nonEmpty, "randomSwitch() requires at least 1 possibility")
     randomSwitch(possibilities.toList, None)
   }
 
@@ -137,12 +140,12 @@ trait ConditionalStatements[B] extends Execs[B] {
    * @return a new builder with a random switch added to its actions
    */
   def randomSwitchOrElse(possibilities: (Double, ChainBuilder)*)(elseNext: ChainBuilder): B = {
-    require(possibilities.size >= 1, "randomSwitchOrElse() requires at least 1 possibility")
+    require(possibilities.nonEmpty, "randomSwitchOrElse() requires at least 1 possibility")
     randomSwitch(possibilities.toList, Some(elseNext))
   }
 
   private def randomSwitch(possibilities: List[(Double, ChainBuilder)], elseNext: Option[ChainBuilder]): B =
-    exec(new RandomSwitchBuilder(possibilities, elseNext))
+    exec(RandomSwitchBuilder(possibilities, elseNext))
 
   /**
    * Add a switch in the chain. Selection uses a uniformly distributed random strategy
@@ -169,7 +172,7 @@ trait ConditionalStatements[B] extends Execs[B] {
    * @return a new builder with a random switch added to its actions
    */
   def roundRobinSwitch(possibilities: ChainBuilder*): B = {
-    require(possibilities.size >= 1, "roundRobinSwitch() requires at least 1 possibility")
+    require(possibilities.nonEmpty, "roundRobinSwitch() requires at least 1 possibility")
     exec(new RoundRobinSwitchBuilder(possibilities.toList))
   }
 }

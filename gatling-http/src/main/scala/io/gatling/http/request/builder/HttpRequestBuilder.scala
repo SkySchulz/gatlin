@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,32 +13,42 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.request.builder
 
-import com.ning.http.client.Request
-
-import io.gatling.core.session.Expression
+import io.gatling.core.body.{ Body, RawFileBodies }
+import io.gatling.core.config.GatlingConfiguration
+import io.gatling.core.session._
 import io.gatling.http.action.HttpRequestActionBuilder
+import io.gatling.http.cache.HttpCaches
+import io.gatling.http.{ HeaderNames, HeaderValues, ResponseTransformer }
 import io.gatling.http.check.HttpCheck
-import io.gatling.http.check.HttpCheckTarget.Status
-import io.gatling.http.config.HttpProtocol
+import io.gatling.http.check.HttpCheckScope.Status
+import io.gatling.http.protocol.HttpProtocol
 import io.gatling.http.request._
-import io.gatling.http.response.ResponseTransformer
+
+import com.softwaremill.quicklens._
 
 case class HttpAttributes(
-  checks: List[HttpCheck] = Nil,
-  ignoreDefaultChecks: Boolean = false,
-  silent: Boolean = false,
-  followRedirect: Boolean = true,
-  responseTransformer: Option[ResponseTransformer] = None,
-  explicitResources: List[AbstractHttpRequestBuilder[_]] = Nil,
-  body: Option[Body] = None,
-  bodyParts: List[BodyPart] = Nil,
-  extraInfoExtractor: Option[ExtraInfoExtractor] = None)
+    checks:              List[HttpCheck]                      = Nil,
+    ignoreDefaultChecks: Boolean                              = false,
+    silent:              Option[Boolean]                      = None,
+    followRedirect:      Boolean                              = true,
+    responseTransformer: Option[ResponseTransformer]          = None,
+    explicitResources:   List[HttpRequestBuilder]             = Nil,
+    body:                Option[Body]                         = None,
+    bodyParts:           List[BodyPart]                       = Nil,
+    formParams:          List[HttpParam]                      = Nil,
+    form:                Option[Expression[Map[String, Any]]] = None
+)
 
-object AbstractHttpRequestBuilder {
+object HttpRequestBuilder {
 
-  implicit def toActionBuilder(requestBuilder: AbstractHttpRequestBuilder[_]) = new HttpRequestActionBuilder(requestBuilder)
+  implicit def toActionBuilder(requestBuilder: HttpRequestBuilder): HttpRequestActionBuilder =
+    new HttpRequestActionBuilder(requestBuilder)
+
+  private val MultipartFormDataValueExpression = HeaderValues.MultipartFormData.expressionSuccess
+  private val ApplicationFormUrlEncodedValueExpression = HeaderValues.ApplicationFormUrlEncoded.expressionSuccess
 }
 
 /**
@@ -46,98 +56,100 @@ object AbstractHttpRequestBuilder {
  *
  * @param httpAttributes the base HTTP attributes
  */
-abstract class AbstractHttpRequestBuilder[B <: AbstractHttpRequestBuilder[B]](commonAttributes: CommonAttributes, val httpAttributes: HttpAttributes)
-    extends RequestBuilder[B](commonAttributes) {
+case class HttpRequestBuilder(commonAttributes: CommonAttributes, httpAttributes: HttpAttributes) extends RequestBuilder[HttpRequestBuilder] {
 
-  /**
-   * Method overridden in children to create a new instance of the correct type
-   */
-  private[http] def newInstance(httpAttributes: HttpAttributes): B
+  private[http] def newInstance(commonAttributes: CommonAttributes): HttpRequestBuilder = new HttpRequestBuilder(commonAttributes, httpAttributes)
 
   /**
    * Stops defining the request and adds checks on the response
    *
    * @param checks the checks that will be performed on the response
    */
-  def check(checks: HttpCheck*): B = newInstance(httpAttributes.copy(checks = httpAttributes.checks ::: checks.toList))
+  def check(checks: HttpCheck*): HttpRequestBuilder = this.modify(_.httpAttributes.checks).using(_ ::: checks.toList)
 
   /**
    * Ignore the default checks configured on HttpProtocol
    */
-  def ignoreDefaultChecks: B = newInstance(httpAttributes.copy(ignoreDefaultChecks = true))
+  def ignoreDefaultChecks: HttpRequestBuilder = this.modify(_.httpAttributes.ignoreDefaultChecks).setTo(true)
 
-  def silent: B = newInstance(httpAttributes.copy(silent = true))
+  def silent: HttpRequestBuilder = this.modify(_.httpAttributes.silent).setTo(Some(true))
 
-  def disableFollowRedirect: B = newInstance(httpAttributes.copy(followRedirect = false))
+  def notSilent: HttpRequestBuilder = this.modify(_.httpAttributes.silent).setTo(Some(false))
 
-  def extraInfoExtractor(f: ExtraInfoExtractor): B = newInstance(httpAttributes.copy(extraInfoExtractor = Some(f)))
+  def disableFollowRedirect: HttpRequestBuilder = this.modify(_.httpAttributes.followRedirect).setTo(false)
 
   /**
    * @param responseTransformer transforms the response before it's handled to the checks pipeline
    */
-  def transformResponse(responseTransformer: ResponseTransformer): B = newInstance(httpAttributes.copy(responseTransformer = Some(responseTransformer)))
+  def transformResponse(responseTransformer: ResponseTransformer): HttpRequestBuilder = this.modify(_.httpAttributes.responseTransformer).setTo(Some(responseTransformer))
 
-  def body(bd: Body): B = newInstance(httpAttributes.copy(body = Some(bd)))
+  def body(bd: Body): HttpRequestBuilder = this.modify(_.httpAttributes.body).setTo(Some(bd))
 
-  def processRequestBody(processor: Body => Body): B = newInstance(httpAttributes.copy(body = httpAttributes.body.map(processor)))
+  def processRequestBody(processor: Body => Body): HttpRequestBuilder = this.modify(_.httpAttributes.body).using(_.map(processor))
 
-  def bodyPart(bodyPart: BodyPart): B = newInstance(httpAttributes.copy(bodyParts = bodyPart :: httpAttributes.bodyParts))
+  def bodyPart(bodyPart: BodyPart): HttpRequestBuilder = this.modify(_.httpAttributes.bodyParts).using(_ ::: List(bodyPart))
 
-  def resources(res: AbstractHttpRequestBuilder[_]*): B = newInstance(httpAttributes.copy(explicitResources = res.toList))
-
-  def request(protocol: HttpProtocol): Expression[Request]
+  def resources(res: HttpRequestBuilder*): HttpRequestBuilder = this.modify(_.httpAttributes.explicitResources).setTo(res.toList)
 
   /**
-   * This method builds the request that will be sent
-   *
-   * @param protocol the protocol of the current scenario
-   * @param throttled if throttling is enabled
+   * Adds Content-Type header to the request set with "multipart/form-data" value
    */
-  def build(protocol: HttpProtocol, throttled: Boolean): HttpRequestDef = {
+  def asMultipartForm: HttpRequestBuilder = header(HeaderNames.ContentType, HttpRequestBuilder.MultipartFormDataValueExpression)
+  def asFormUrlEncoded: HttpRequestBuilder = header(HeaderNames.ContentType, HttpRequestBuilder.ApplicationFormUrlEncodedValueExpression)
+
+  def formParam(key: Expression[String], value: Expression[Any]): HttpRequestBuilder = formParam(SimpleParam(key, value))
+  def multivaluedFormParam(key: Expression[String], values: Expression[Seq[Any]]): HttpRequestBuilder = formParam(MultivaluedParam(key, values))
+
+  def formParamSeq(seq: Seq[(String, Any)]): HttpRequestBuilder = formParamSeq(seq2SeqExpression(seq))
+  def formParamSeq(seq: Expression[Seq[(String, Any)]]): HttpRequestBuilder = formParam(ParamSeq(seq))
+
+  def formParamMap(map: Map[String, Any]): HttpRequestBuilder = formParamSeq(map2SeqExpression(map))
+  def formParamMap(map: Expression[Map[String, Any]]): HttpRequestBuilder = formParam(ParamMap(map))
+
+  private def formParam(formParam: HttpParam): HttpRequestBuilder =
+    this.modify(_.httpAttributes.formParams).using(_ ::: List(formParam))
+
+  def form(form: Expression[Map[String, Any]]): HttpRequestBuilder =
+    this.modify(_.httpAttributes.form).setTo(Some(form))
+
+  def formUpload(name: Expression[String], filePath: Expression[String])(implicit rawFileBodies: RawFileBodies): HttpRequestBuilder =
+    bodyPart(BodyPart.rawFileBodyPart(Some(name), filePath))
+
+  def build(httpCaches: HttpCaches, httpProtocol: HttpProtocol, throttled: Boolean, configuration: GatlingConfiguration): HttpRequestDef = {
 
     val checks =
       if (httpAttributes.ignoreDefaultChecks)
         httpAttributes.checks
       else
-        protocol.responsePart.checks ::: httpAttributes.checks
+        httpProtocol.responsePart.checks ::: httpAttributes.checks
 
-    val resolvedChecks = checks.find(_.target == Status) match {
-      case None => checks ::: List(RequestBuilder.DefaultHttpCheck)
-      case _    => checks
-    }
+    val resolvedChecks =
+      if (checks.exists(_.scope == Status))
+        checks
+      else
+        checks ::: List(RequestBuilder.DefaultHttpCheck)
 
-    val resolvedFollowRedirect = protocol.responsePart.followRedirect && httpAttributes.followRedirect
+    val resolvedFollowRedirect = httpProtocol.responsePart.followRedirect && httpAttributes.followRedirect
 
-    val resolvedResponseTransformer = httpAttributes.responseTransformer.orElse(protocol.responsePart.responseTransformer)
+    val resolvedResponseTransformer = httpAttributes.responseTransformer.orElse(httpProtocol.responsePart.responseTransformer)
 
-    val resolvedResources = httpAttributes.explicitResources.map(_.build(protocol, throttled))
+    val resolvedResources = httpAttributes.explicitResources.map(_.build(httpCaches, httpProtocol, throttled, configuration))
 
-    val resolvedExtraInfoExtractor = httpAttributes.extraInfoExtractor.orElse(protocol.responsePart.extraInfoExtractor)
-
-    val resolvedRequestExpression = request(protocol)
-
-    val resolvedSignatureCalculator = commonAttributes.signatureCalculator.orElse(protocol.requestPart.signatureCalculator)
+    val resolvedRequestExpression = new HttpRequestExpressionBuilder(commonAttributes, httpAttributes, httpCaches, httpProtocol, configuration).build
 
     HttpRequestDef(
       commonAttributes.requestName,
       resolvedRequestExpression,
-      resolvedSignatureCalculator,
       HttpRequestConfig(
         checks = resolvedChecks,
         responseTransformer = resolvedResponseTransformer,
-        extraInfoExtractor = resolvedExtraInfoExtractor,
-        maxRedirects = protocol.responsePart.maxRedirects,
+        maxRedirects = httpProtocol.responsePart.maxRedirects,
         throttled = throttled,
         silent = httpAttributes.silent,
         followRedirect = resolvedFollowRedirect,
-        protocol = protocol,
-        explicitResources = resolvedResources))
+        explicitResources = resolvedResources,
+        httpProtocol = httpProtocol
+      )
+    )
   }
-}
-
-class HttpRequestBuilder(commonAttributes: CommonAttributes, httpAttributes: HttpAttributes) extends AbstractHttpRequestBuilder[HttpRequestBuilder](commonAttributes, httpAttributes) {
-
-  private[http] def newInstance(commonAttributes: CommonAttributes) = new HttpRequestBuilder(commonAttributes, httpAttributes)
-  private[http] def newInstance(httpAttributes: HttpAttributes) = new HttpRequestBuilder(commonAttributes, httpAttributes)
-  def request(protocol: HttpProtocol): Expression[Request] = new HttpRequestExpressionBuilder(commonAttributes, httpAttributes, protocol).build
 }

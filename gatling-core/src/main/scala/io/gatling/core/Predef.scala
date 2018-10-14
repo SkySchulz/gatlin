@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,54 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core
 
-import scala.concurrent.duration.{ DurationInt, FiniteDuration }
-import scala.reflect.ClassTag
-import scala.reflect.io.Path
+import io.gatling.core.config.GatlingConfiguration
+import scala.concurrent.duration._
 
-import io.gatling.core.assertion.AssertionSupport
-import io.gatling.core.check.CheckSupport
-import io.gatling.core.controller.inject.InjectionSupport
-import io.gatling.core.controller.throttle.ThrottlingSupport
-import io.gatling.core.feeder.FeederSupport
-import io.gatling.core.pause.PauseSupport
-import io.gatling.core.session.{ Expression, ExpressionWrapper }
-import io.gatling.core.session.el.EL
-import io.gatling.core.structure.{ ScenarioBuilder, StructureSupport }
-import io.gatling.core.validation.{ SuccessWrapper, Validation }
+import io.gatling.commons.util.Clock
 
-object Predef extends StructureSupport with PauseSupport with CheckSupport with FeederSupport with InjectionSupport with ThrottlingSupport with AssertionSupport {
+object Predef extends CoreDsl {
+
+  implicit var clock: Clock = _
+  implicit var configuration: GatlingConfiguration = _
 
   type Session = io.gatling.core.session.Session
-  type Status = io.gatling.core.result.message.Status
+  type Status = io.gatling.commons.stats.Status
   type Simulation = io.gatling.core.scenario.Simulation
-  type Assertion = io.gatling.core.assertion.Assertion
-
-  implicit def stringToExpression[T: ClassTag](string: String): Expression[T] = string.el
-  implicit def value2Success[T](value: T): Validation[T] = value.success
-  implicit def value2Expression[T](value: T): Expression[T] = value.expression
-
-  def scenario(scenarioName: String): ScenarioBuilder = ScenarioBuilder(scenarioName)
-
-  def WhiteList(patterns: String*) = io.gatling.core.filter.WhiteList(patterns.toList)
-  def BlackList(patterns: String*) = io.gatling.core.filter.BlackList(patterns.toList)
-
-  implicit def string2path(string: String) = Path.string2path(string)
-
-  def flattenMapIntoAttributes(map: Expression[Map[String, Any]]): Expression[Session] =
-    session => map(session).map(resolvedMap => session.setAll(resolvedMap))
-
-  /**********************************/
-  /** Duration implicit conversions */
-  /**********************************/
-
-  implicit def intToFiniteDuration(i: Int): FiniteDuration = i.seconds
-  implicit def integerToFiniteDuration(i: Integer): FiniteDuration = intToFiniteDuration(i.toInt)
+  type Assertion = io.gatling.commons.stats.assertion.Assertion
+  type Node = _root_.jodd.lagarto.dom.Node
 
   /**
-   * Offers the same implicits conversions as [[scala.concurrent.duration.DurationInt]] for Java's Integer.
-   * @param i the Java's integer that will converted to [[scala.concurrent.duration.FiniteDuration]]
+   * Offers the same implicits conversions as scala.concurrent.duration.DurationInt for java.lang.Integer.
+   * @param i the Java's integer that will converted to scala.concurrent.duration.FiniteDuration
    */
   implicit class DurationInteger(val i: Integer) extends AnyVal {
 
@@ -91,4 +65,44 @@ object Predef extends StructureSupport with PauseSupport with CheckSupport with 
     def days = i.toInt.days
     def day = i.toInt.day
   }
+
+  /**
+   * Offers the same implicits conversions as scala.concurrent.duration.DurationInt for java.lang.Long.
+   * @param l the Java's Long that will converted to scala.concurrent.duration.FiniteDuration
+   */
+  implicit class DurationJLong(val l: java.lang.Long) extends AnyVal {
+
+    def nanoseconds = l.toLong.nanoseconds
+    def nanos = l.toLong.nanos
+    def nanosecond = l.toLong.nanosecond
+    def nano = l.toLong.nano
+
+    def microseconds = l.toLong.microseconds
+    def micros = l.toLong.micros
+    def microsecond = l.toLong.microsecond
+    def micro = l.toLong.micro
+
+    def milliseconds = l.toLong.milliseconds
+    def millis = l.toLong.millis
+    def millisecond = l.toLong.millisecond
+    def milli = l.toLong.milli
+
+    def seconds = l.toLong.seconds
+    def second = l.toLong.second
+
+    def minutes = l.toLong.minutes
+    def minute = l.toLong.minute
+
+    def hours = l.toLong.hours
+    def hour = l.toLong.hour
+
+    def days = l.toLong.days
+    def day = l.toLong.day
+  }
+
+  implicit def integerToFiniteDuration(i: Integer): FiniteDuration = intToFiniteDuration(i.toInt)
+
+  implicit def intToFiniteDuration(i: Int): FiniteDuration = i.seconds
+
+  implicit def jlongToFiniteDuration(i: java.lang.Long): FiniteDuration = i.toLong.seconds
 }

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,25 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.charts.component
 
-import scala.collection.JavaConversions.enumerationAsScalaIterator
+import scala.collection.JavaConverters._
+
+import io.gatling.core.stats._
 
 import com.dongxiguo.fastring.Fastring
-import com.typesafe.scalalogging.slf4j.StrictLogging
+import com.typesafe.scalalogging.StrictLogging
 
 import io.gatling.charts.component.impl.ComponentLibraryImpl
-import io.gatling.core.result._
 
-object ComponentLibrary extends StrictLogging {
+private[charts] object ComponentLibrary extends StrictLogging {
 
   val Instance: ComponentLibrary = {
 
-    val STATIC_LIBRARY_BINDER_PATH = "com/excilys/ebi/gatling/charts/component/impl/ComponentLibraryImpl.class"
+    val StaticLibraryBinderPath = "io/gatling/charts/component/impl/ComponentLibraryImpl.class"
 
     val paths = Option(getClass.getClassLoader)
-      .map(_.getResources(STATIC_LIBRARY_BINDER_PATH))
-      .getOrElse(ClassLoader.getSystemResources(STATIC_LIBRARY_BINDER_PATH))
+      .map(_.getResources(StaticLibraryBinderPath))
+      .getOrElse(ClassLoader.getSystemResources(StaticLibraryBinderPath))
+      .asScala
       .toList
 
     if (paths.size > 1) {
@@ -43,16 +46,14 @@ object ComponentLibrary extends StrictLogging {
   }
 }
 
-trait ComponentLibrary {
-  def getAllSessionsJs(runStart: Long, series: Series[IntVsTimePlot]): Fastring
+private[gatling] trait ComponentLibrary {
+  def getAllUsersJs(runStart: Long, series: Series[IntVsTimePlot]): Fastring
   def getActiveSessionsChartComponent(runStart: Long, series: Seq[Series[IntVsTimePlot]]): Component
-  def getRequestsChartComponent(runStart: Long, allRequests: Series[IntVsTimePlot], failedRequests: Series[IntVsTimePlot], succeededRequests: Series[IntVsTimePlot], pieSeries: Series[PieSlice]): Component
-  def getResponsesChartComponent(runStart: Long, allResponses: Series[IntVsTimePlot], failedResponses: Series[IntVsTimePlot], succeededResponses: Series[IntVsTimePlot], pieSeries: Series[PieSlice]): Component
+  def getRequestsChartComponent(runStart: Long, counts: Series[CountsVsTimePlot], pieSeries: Series[PieSlice]): Component
+  def getResponsesChartComponent(runStart: Long, counts: Series[CountsVsTimePlot], pieSeries: Series[PieSlice]): Component
   def getRequestDetailsResponseTimeChartComponent(runStart: Long, responseTimesSuccess: Series[PercentilesVsTimePlot]): Component
   def getRequestDetailsResponseTimeDistributionChartComponent(responseTimesSuccess: Series[PercentVsTimePlot], responseTimesFailures: Series[PercentVsTimePlot]): Component
-  def getRequestDetailsLatencyChartComponent(runStart: Long, latencySuccess: Series[PercentilesVsTimePlot]): Component
   def getRequestDetailsResponseTimeScatterChartComponent(successData: Series[IntVsTimePlot], failuresData: Series[IntVsTimePlot]): Component
-  def getRequestDetailsLatencyScatterChartComponent(successData: Series[IntVsTimePlot], failuresData: Series[IntVsTimePlot]): Component
   def getRequestDetailsIndicatorChartComponent: Component
   def getNumberOfRequestsChartComponent(numberOfRequestNames: Int): Component
   def getGroupDetailsDurationChartComponent(containerId: String, yAxisName: String, runStart: Long, durationsSuccess: Series[PercentilesVsTimePlot]): Component

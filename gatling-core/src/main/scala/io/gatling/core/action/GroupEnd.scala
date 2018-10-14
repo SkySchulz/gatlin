@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,21 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.action
 
-import akka.actor.ActorRef
-import io.gatling.core.result.writer.DataWriterClient
+import io.gatling.commons.util.Clock
 import io.gatling.core.session.{ GroupBlock, Session }
-import io.gatling.core.util.TimeHelper.nowMillis
-import com.typesafe.scalalogging.slf4j.StrictLogging
+import io.gatling.core.stats.StatsEngine
+import io.gatling.core.util.NameGen
 
-class GroupEnd(val next: ActorRef) extends Chainable with DataWriterClient with StrictLogging {
+class GroupEnd(statsEngine: StatsEngine, clock: Clock, val next: Action) extends ChainableAction with NameGen {
+
+  val name: String = genName("groupEnd")
 
   def execute(session: Session): Unit =
     session.blockStack match {
-
-      case (group: GroupBlock) :: tail =>
-        writeGroupData(session, group, nowMillis)
+      case (group: GroupBlock) :: _ =>
+        statsEngine.logGroupEnd(session, group, clock.nowMillis)
         next ! session.exitGroup
 
       case _ =>

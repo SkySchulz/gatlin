@@ -1,22 +1,40 @@
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.gatling.recorder.scenario
 
 import scala.concurrent.duration.{ Duration, DurationLong }
-
-import com.typesafe.scalalogging.slf4j.StrictLogging
 
 import io.gatling.http.util.HttpHelper
 import io.gatling.recorder.config.RecorderConfiguration
 import io.gatling.recorder.util.collection.RichSeq
 
-case class ScenarioDefinition(elements: Seq[ScenarioElement]) {
-  def isEmpty = elements.isEmpty
+import com.softwaremill.quicklens._
+import com.typesafe.scalalogging.StrictLogging
+import io.netty.handler.codec.http.HttpResponseStatus
+
+private[recorder] case class ScenarioDefinition(elements: Seq[ScenarioElement]) {
+  def isEmpty: Boolean = elements.isEmpty
 }
 
-object ScenarioDefinition extends StrictLogging {
+private[recorder] object ScenarioDefinition extends StrictLogging {
 
   private val ConsecutiveResourcesMaxIntervalInMillis = 1000
 
-  private def isRedirection(t: TimedScenarioElement[RequestElement]) = HttpHelper.isRedirect(t.element.statusCode)
+  private def isRedirection(t: TimedScenarioElement[RequestElement]) = HttpHelper.isRedirect(HttpResponseStatus.valueOf(t.element.statusCode))
 
   private def filterRedirection(requests: Seq[TimedScenarioElement[RequestElement]]): List[TimedScenarioElement[RequestElement]] = {
     val groupedRequests = requests.groupAsLongAs(isRedirection)
@@ -53,11 +71,12 @@ object ScenarioDefinition extends StrictLogging {
     groupChainedRequests.map {
       case List(request) => request
       case mainRequest :: resources =>
-        val arrivalTime = resources.map(_.arrivalTime).max
 
         // TODO NRE : are we sure they are both absolute URLs?
         val nonEmbeddedResources = resources.filterNot(request => mainRequest.element.embeddedResources.exists(_.url == request.element.uri)).map(_.element)
-        mainRequest.copy(arrivalTime = arrivalTime, element = mainRequest.element.copy(nonEmbeddedResources = nonEmbeddedResources))
+        mainRequest
+          .modify(_.arrivalTime).setTo(resources.map(_.arrivalTime).max)
+          .modify(_.element.nonEmbeddedResources).setTo(nonEmbeddedResources)
     }
   }
 

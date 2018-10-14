@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,72 +13,55 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.controller
 
-import java.net.URI
+import java.util.concurrent.ConcurrentLinkedQueue
 
-import io.gatling.recorder.http.handler.client.TimedHttpRequest
-
-import scala.collection.mutable
+import scala.collection.JavaConverters._
 import scala.concurrent.duration.DurationLong
-import scala.reflect.io.Path.string2path
-import scala.tools.nsc.io.File
 
-import org.jboss.netty.handler.codec.http.{ HttpRequest, HttpResponse }
-import org.jboss.netty.handler.codec.http.HttpHeaders.Names.PROXY_AUTHORIZATION
-
-import com.ning.http.util.Base64
-import com.typesafe.scalalogging.slf4j.StrictLogging
-
-import io.gatling.core.validation.{ Failure, Success }
-import io.gatling.recorder.{ Har, Proxy }
+import io.gatling.commons.util.Clock
+import io.gatling.commons.util.PathHelper._
+import io.gatling.commons.validation._
+import io.gatling.http.client.ahc.uri.Uri
+import io.gatling.recorder.config.RecorderMode._
 import io.gatling.recorder.config.RecorderConfiguration
-import io.gatling.recorder.config.RecorderConfiguration.configuration
-import io.gatling.recorder.config.RecorderPropertiesBuilder
-import io.gatling.recorder.http.HttpProxy
-import io.gatling.recorder.scenario.{ RequestElement, ScenarioDefinition, ScenarioExporter, TimedScenarioElement, TagElement }
-import io.gatling.recorder.ui.{ PauseInfo, RecorderFrontend, RequestInfo, SSLInfo, TagInfo }
+import io.gatling.recorder.http.Mitm
+import io.gatling.recorder.model._
+import io.gatling.recorder.scenario._
+import io.gatling.recorder.ui._
 
-object RecorderController {
-  def apply(props: Map[String, Any], recorderConfigFile: Option[File] = None): Unit = {
-    RecorderConfiguration.initialSetup(props, recorderConfigFile)
-    new RecorderController
-  }
-}
+import com.typesafe.scalalogging.StrictLogging
 
-class RecorderController extends StrictLogging {
+private[recorder] class RecorderController(clock: Clock) extends StrictLogging {
 
-  private val frontEnd = RecorderFrontend.newFrontend(this)
+  private val frontEnd = RecorderFrontEnd.newFrontend(this)
 
-  @volatile private var proxy: HttpProxy = _
+  @volatile private var mitm: Mitm = _
 
-  private class SynchronizedArrayBuffer[T] extends mutable.ArrayBuffer[T] with mutable.SynchronizedBuffer[T]
-
-  // Collection of tuples, (arrivalTime, request)
-  private val currentRequests = new SynchronizedArrayBuffer[TimedScenarioElement[RequestElement]]
-  // Collection of tuples, (arrivalTime, tag)
-  private val currentTags = new SynchronizedArrayBuffer[TimedScenarioElement[TagElement]]
+  private val requests = new ConcurrentLinkedQueue[TimedScenarioElement[RequestElement]]()
+  private val tags = new ConcurrentLinkedQueue[TimedScenarioElement[TagElement]]()
 
   frontEnd.init()
 
   def startRecording(): Unit = {
-    val selectedMode = frontEnd.selectedMode
+    val selectedMode = frontEnd.selectedRecorderMode
     val harFilePath = frontEnd.harFilePath
-    if (selectedMode == Har && !File(harFilePath).exists) {
+    if (selectedMode == Har && !string2path(harFilePath).exists) {
       frontEnd.handleMissingHarFile(harFilePath)
     } else {
-      implicit val config = configuration
-      val simulationFile = File(ScenarioExporter.simulationFilePath)
+      val simulationFile = ScenarioExporter.simulationFilePath
       val proceed = if (simulationFile.exists) frontEnd.askSimulationOverwrite else true
       if (proceed) {
         selectedMode match {
           case Har =>
             ScenarioExporter.exportScenario(harFilePath) match {
               case Failure(errMsg) => frontEnd.handleHarExportFailure(errMsg)
-              case Success(_)      => frontEnd.handleHarExportSuccess()
+              case _               => frontEnd.handleHarExportSuccess()
             }
           case Proxy =>
-            proxy = new HttpProxy(config, this)
+            mitm = Mitm(this, clock, RecorderConfiguration.configuration)
             frontEnd.recordingStarted()
         }
       }
@@ -88,66 +71,46 @@ class RecorderController extends StrictLogging {
   def stopRecording(save: Boolean): Unit = {
     frontEnd.recordingStopped()
     try {
-      if (currentRequests.isEmpty)
+      if (requests.isEmpty)
         logger.info("Nothing was recorded, skipping scenario generation")
       else {
-        implicit val config = configuration
-        val scenario = ScenarioDefinition(currentRequests.toVector, currentTags.toVector)
+        val scenario = ScenarioDefinition(requests.asScala.toVector, tags.asScala.toVector)
         ScenarioExporter.saveScenario(scenario)
       }
 
     } finally {
-      proxy.shutdown()
+      mitm.shutdown()
       clearRecorderState()
       frontEnd.init()
     }
   }
 
-  def receiveRequest(request: HttpRequest): Unit =
-    // TODO NICO - that's not the appropriate place to synchronize !
-    synchronized {
-      // If Outgoing Proxy set, we record the credentials to use them when sending the request
-      Option(request.headers.get(PROXY_AUTHORIZATION)).foreach {
-        header =>
-          // Split on " " and take 2nd group (Basic credentialsInBase64==)
-          val credentials = new String(Base64.decode(header.split(" ")(1))).split(":")
-          val props = new RecorderPropertiesBuilder
-          props.proxyUsername(credentials(0))
-          props.proxyPassword(credentials(1))
-          RecorderConfiguration.reload(props.build)
-      }
-    }
+  def receiveResponse(request: HttpRequest, response: HttpResponse): Unit =
+    if (RecorderConfiguration.configuration.filters.filters.forall(_.accept(request.uri))) {
+      requests.add(TimedScenarioElement(request.timestamp, response.timestamp, RequestElement(request, response)))
 
-  def receiveResponse(request: TimedHttpRequest, response: HttpResponse): Unit = {
-    if (configuration.filters.filters.map(_.accept(request.httpRequest.getUri)).getOrElse(true)) {
-      val arrivalTime = System.currentTimeMillis
-
-      val requestEl = RequestElement(request.httpRequest, response)
-      currentRequests += TimedScenarioElement(request.sendTime, arrivalTime, requestEl)
-
-      // Notify the frontend
-      val previousSendTime = currentRequests.lastOption.map(_.sendTime)
+      // Notify frontend
+      val previousSendTime = requests.asScala.lastOption.map(_.sendTime)
       previousSendTime.foreach { t =>
-        val delta = (arrivalTime - t).milliseconds
-        if (delta > configuration.core.thresholdForPauseCreation)
-          frontEnd.receiveEventInfo(PauseInfo(delta))
+        val delta = (response.timestamp - t).milliseconds
+        if (delta > RecorderConfiguration.configuration.core.thresholdForPauseCreation)
+          frontEnd.receiveEvent(PauseFrontEndEvent(delta))
       }
-      frontEnd.receiveEventInfo(RequestInfo(request.httpRequest, response))
+      frontEnd.receiveEvent(RequestFrontEndEvent(request, response))
     }
-  }
 
   def addTag(text: String): Unit = {
-    val now = System.currentTimeMillis
-    currentTags += TimedScenarioElement(now, now, TagElement(text))
-    frontEnd.receiveEventInfo(TagInfo(text))
+    val now = clock.nowMillis
+    tags.add(TimedScenarioElement(now, now, TagElement(text)))
+    frontEnd.receiveEvent(TagFrontEndEvent(text))
   }
 
-  def secureConnection(securedHostURI: URI): Unit = {
-    frontEnd.receiveEventInfo(SSLInfo(securedHostURI.toString))
+  def secureConnection(securedHostURI: Uri): Unit = {
+    frontEnd.receiveEvent(SslFrontEndEvent(securedHostURI.toUrl))
   }
 
   def clearRecorderState(): Unit = {
-    currentRequests.clear()
-    currentTags.clear()
+    requests.clear()
+    tags.clear()
   }
 }

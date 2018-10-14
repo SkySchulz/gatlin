@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,29 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.check
 
-import io.gatling.core.check.{ Check, CheckFactory, Preparer }
-import io.gatling.core.validation.SuccessWrapper
-import io.gatling.http.check.HttpCheckTarget._
-import io.gatling.http.response.{ ByteArrayResponseBodyUsageStrategy, InputStreamResponseBodyUsageStrategy, Response, ResponseBodyUsageStrategy, StringResponseBodyUsageStrategy }
+import io.gatling.commons.validation._
+import io.gatling.core.check.{ Check, Preparer, Specializer }
+import io.gatling.http.check.HttpCheckScope._
+import io.gatling.http.response._
 
 object HttpCheckBuilders {
 
-  private def httpCheckFactory(target: HttpCheckTarget, responseBodyUsageStrategy: Option[ResponseBodyUsageStrategy]): CheckFactory[HttpCheck, Response] =
+  private def specializer(target: HttpCheckScope, responseBodyUsageStrategy: Option[ResponseBodyUsageStrategy]): Specializer[HttpCheck, Response] =
     (wrapped: Check[Response]) => HttpCheck(wrapped, target, responseBodyUsageStrategy)
 
-  val StatusCheckFactory = httpCheckFactory(Status, None)
-  val UrlCheckFactory = httpCheckFactory(Url, None)
-  val ChecksumCheckFactory = httpCheckFactory(Checksum, None)
-  val HeaderCheckFactory = httpCheckFactory(Header, None)
-  def bodyCheckFactory(responseBodyUsageStrategy: ResponseBodyUsageStrategy) = httpCheckFactory(Body, Some(responseBodyUsageStrategy))
-  val StringBodyCheckFactory = bodyCheckFactory(StringResponseBodyUsageStrategy)
-  val StreamBodyCheckFactory = bodyCheckFactory(InputStreamResponseBodyUsageStrategy)
-  val BytesBodyCheckFactory = bodyCheckFactory(ByteArrayResponseBodyUsageStrategy)
-  val TimeCheckFactory = httpCheckFactory(Body, None)
+  val StatusSpecializer = specializer(Status, None)
+  val UrlSpecializer = specializer(Url, None)
+  val HeaderSpecializer = specializer(Header, None)
+  def bodySpecializer(responseBodyUsageStrategy: ResponseBodyUsageStrategy) = specializer(Body, Some(responseBodyUsageStrategy))
+  val StringBodySpecializer = bodySpecializer(StringResponseBodyUsageStrategy)
+  val CharArrayBodySpecializer = bodySpecializer(CharArrayResponseBodyUsageStrategy)
+  val StreamBodySpecializer = bodySpecializer(InputStreamResponseBodyUsageStrategy)
+  val BytesBodySpecializer = bodySpecializer(ByteArrayResponseBodyUsageStrategy)
+  val TimeSpecializer = specializer(Body, None)
 
-  val PassThroughResponsePreparer: Preparer[Response, Response] = (r: Response) => r.success
-  val ResponseBodyStringPreparer: Preparer[Response, String] = (response: Response) => response.body.string.success
-  val ResponseBodyBytesPreparer: Preparer[Response, Array[Byte]] = (response: Response) => response.body.bytes.success
+  val PassThroughResponsePreparer: Preparer[Response, Response] = _.success
+  val ResponseBodyStringPreparer: Preparer[Response, String] = _.body.string.success
+  val ResponseBodyBytesPreparer: Preparer[Response, Array[Byte]] = _.body.bytes.success
+  val UrlStringPreparer: Preparer[Response, String] = _.request.getUri.toFullUrl.success
 }

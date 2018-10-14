@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,63 +13,71 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.action.builder
 
+import java.util.concurrent.ThreadLocalRandom
+
 import scala.annotation.tailrec
-import scala.concurrent.forkjoin.ThreadLocalRandom
 
-import com.typesafe.scalalogging.slf4j.StrictLogging
-
-import akka.actor.ActorDSL.actor
-import akka.actor.ActorRef
+import io.gatling.commons.validation._
+import io.gatling.commons.util.Collections._
+import io.gatling.core.action.{ Action, Switch }
 import io.gatling.core.session.Expression
-import io.gatling.core.action.Switch
-import io.gatling.core.config.Protocols
-import io.gatling.core.session.Expression
-import io.gatling.core.structure.ChainBuilder
-import io.gatling.core.validation.SuccessWrapper
+import io.gatling.core.structure.{ ChainBuilder, ScenarioContext }
+import io.gatling.core.util.NameGen
 
-class RandomSwitchBuilder(possibilities: List[(Double, ChainBuilder)], elseNext: Option[ChainBuilder]) extends ActionBuilder with StrictLogging {
+import com.typesafe.scalalogging.StrictLogging
 
-  val sum = possibilities.map(_._1).sum
-  require(sum <= 100.0, "Can't build a random switch with percentage sum > 100")
-  if (sum < 100.0 && elseNext.isDefined)
+object RandomSwitchBuilder {
+
+  val Accuracy = 10000
+
+  def percentageToInt(p: Double) = (p * Accuracy / 100).toInt
+
+  def randomWithinAccuracy: Int = ThreadLocalRandom.current.nextInt(Accuracy)
+
+  def apply(possibilities: List[(Double, ChainBuilder)], elseNext: Option[ChainBuilder]) = {
+    val normalizedPossibilities = possibilities
+      .collect { case (p, c) => (percentageToInt(p), c) }
+      .filter { case (p, c) => p > 0 }
+    new RandomSwitchBuilder(normalizedPossibilities, elseNext)
+  }
+}
+
+class RandomSwitchBuilder(possibilities: List[(Int, ChainBuilder)], elseNext: Option[ChainBuilder]) extends ActionBuilder with StrictLogging with NameGen {
+
+  import RandomSwitchBuilder._
+
+  val sum = possibilities.sumBy(_._1)
+  require(sum <= Accuracy, s"Random switch weights sum is ${sum.toDouble / 100}, mustn't be bigger than 100%")
+  if (sum == Accuracy && elseNext.isDefined)
     logger.warn("Random switch has a 100% sum, yet a else is defined?!")
 
-  def build(next: ActorRef, protocols: Protocols) = {
+  override def build(ctx: ScenarioContext, next: Action): Action = {
 
     val possibleActions = possibilities.map {
       case (percentage, possibility) =>
-        val possibilityAction = possibility.build(next, protocols)
+        val possibilityAction = possibility.build(ctx, next)
         (percentage, possibilityAction)
     }
 
-    val elseNextActor = elseNext.map(_.build(next, protocols)).getOrElse(next)
+    val elseNextAction = elseNext.map(_.build(ctx, next)).getOrElse(next)
 
-    val nextAction: Expression[ActorRef] = _ => {
+    val nextAction: Expression[Action] = _ => {
 
-        @tailrec
-        def determineNextAction(index: Double, possibilities: List[(Double, ActorRef)]): ActorRef = possibilities match {
-          case Nil => elseNextActor
-          case (percentage, possibleAction) :: others =>
-            if (percentage >= index)
-              possibleAction
-            else
-              determineNextAction(index - percentage, others)
-        }
+      @tailrec
+      def determineNextAction(index: Int, possibilities: List[(Int, Action)]): Action = possibilities match {
+        case Nil => elseNextAction
+        case (percentage, possibleAction) :: others =>
+          if (percentage >= index)
+            possibleAction
+          else
+            determineNextAction(index - percentage, others)
+      }
 
-      determineNextAction(ThreadLocalRandom.current.nextDouble(0.0, 100.0), possibleActions).success
+      determineNextAction(randomWithinAccuracy, possibleActions).success
     }
-
-    actor(new Switch(nextAction, next))
-  }
-
-  override def registerDefaultProtocols(protocols: Protocols) = {
-
-    val actionBuilders = possibilities.flatMap { case (_, chainBuilder) => chainBuilder.actionBuilders } ::: elseNext.map(_.actionBuilders).getOrElse(Nil)
-
-    actionBuilders.foldLeft(protocols) { (protocols, actionBuilder) =>
-      actionBuilder.registerDefaultProtocols(protocols)
-    }
+    new Switch(nextAction, ctx.coreComponents.statsEngine, ctx.coreComponents.clock, genName("randomSwitch"), next)
   }
 }

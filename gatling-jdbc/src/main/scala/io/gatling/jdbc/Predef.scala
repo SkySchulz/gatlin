@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,13 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.jdbc
 
-import io.gatling.core.feeder.RecordSeqFeederBuilder
+import io.gatling.core.config.GatlingConfiguration
+import io.gatling.core.feeder.{ InMemoryFeederSource, SourceFeederBuilder }
 import io.gatling.jdbc.feeder.JdbcFeederSource
 
 object Predef {
 
-  def jdbcFeeder(url: String, username: String, password: String, sql: String): RecordSeqFeederBuilder[Any] =
-    RecordSeqFeederBuilder(JdbcFeederSource(url, username, password, sql))
+  def jdbcFeeder(url: String, username: String, password: String, sql: String)(implicit configuration: GatlingConfiguration): SourceFeederBuilder[Any] =
+    SourceFeederBuilder(InMemoryFeederSource(JdbcFeederSource(url, username, password, sql)), configuration)
 }

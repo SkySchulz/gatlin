@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,45 +13,56 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.charts.report
 
-import scala.tools.nsc.io.Path
+import java.nio.file.Path
 
 import io.gatling.charts.component.ComponentLibrary
 import io.gatling.charts.config.ChartsFiles.{ globalFile, menuFile }
 import io.gatling.charts.template.{ MenuTemplate, PageTemplate }
+import io.gatling.commons.stats.RequestStatsPath
+import io.gatling.commons.util.ScanHelper.deepCopyPackageContent
+import io.gatling.core.config.GatlingConfiguration
 import io.gatling.core.config.GatlingFiles._
-import io.gatling.core.result.RequestStatsPath
-import io.gatling.core.result.reader.DataReader
-import io.gatling.core.util.ScanHelper.deepCopyPackageContent
 
-object ReportsGenerator {
+private[gatling] class ReportsGenerator(implicit configuration: GatlingConfiguration) {
 
-  def generateFor(outputDirectoryName: String, dataReader: DataReader): Path = {
+  def generateFor(reportsGenerationInputs: ReportsGenerationInputs): Path = {
+    import reportsGenerationInputs._
 
-      def generateMenu(): Unit = new TemplateWriter(menuFile(outputDirectoryName)).writeToFile(new MenuTemplate().getOutput)
+    def hasAtLeastOneRequestReported: Boolean =
+      logFileReader.statsPaths.exists(_.isInstanceOf[RequestStatsPath])
 
-      def generateStats(): Unit = new StatsReportGenerator(outputDirectoryName, dataReader, ComponentLibrary.Instance).generate()
+    def generateMenu(): Unit = new TemplateWriter(menuFile(reportFolderName)).writeToFile(new MenuTemplate().getOutput)
 
-      def copyAssets(): Unit = {
-        deepCopyPackageContent(GatlingAssetsStylePackage, styleDirectory(outputDirectoryName))
-        deepCopyPackageContent(GatlingAssetsJsPackage, jsDirectory(outputDirectoryName))
-      }
+    def generateStats(): Unit = new StatsReportGenerator(reportsGenerationInputs, ComponentLibrary.Instance).generate()
 
-    if (!dataReader.statsPaths.collectFirst { case r @ RequestStatsPath(_, _) => r }.isDefined) throw new UnsupportedOperationException("There were no requests sent during the simulation, reports won't be generated")
+    def generateAssertions(): Unit = new AssertionsReportGenerator(reportsGenerationInputs, ComponentLibrary.Instance).generate()
+
+    def copyAssets(): Unit = {
+      deepCopyPackageContent(GatlingAssetsStylePackage, styleDirectory(reportFolderName))
+      deepCopyPackageContent(GatlingAssetsJsPackage, jsDirectory(reportFolderName))
+    }
+
+    if (!hasAtLeastOneRequestReported)
+      throw new UnsupportedOperationException("There were no requests sent during the simulation, reports won't be generated")
 
     val reportGenerators =
-      List(new AllSessionsReportGenerator(outputDirectoryName, dataReader, ComponentLibrary.Instance),
-        new GlobalReportGenerator(outputDirectoryName, dataReader, ComponentLibrary.Instance),
-        new RequestDetailsReportGenerator(outputDirectoryName, dataReader, ComponentLibrary.Instance),
-        new GroupDetailsReportGenerator(outputDirectoryName, dataReader, ComponentLibrary.Instance))
+      List(
+        new AllSessionsReportGenerator(reportsGenerationInputs, ComponentLibrary.Instance),
+        new GlobalReportGenerator(reportsGenerationInputs, ComponentLibrary.Instance),
+        new RequestDetailsReportGenerator(reportsGenerationInputs, ComponentLibrary.Instance),
+        new GroupDetailsReportGenerator(reportsGenerationInputs, ComponentLibrary.Instance)
+      )
 
     copyAssets()
     generateMenu()
-    PageTemplate.setRunInfo(dataReader.runMessage, dataReader.runStart, dataReader.runEnd)
-    reportGenerators.foreach(_.generate)
+    PageTemplate.setRunInfo(logFileReader.runMessage, logFileReader.runEnd)
+    reportGenerators.foreach(_.generate())
     generateStats()
+    generateAssertions()
 
-    globalFile(outputDirectoryName)
+    globalFile(reportFolderName)
   }
 }

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,16 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.charts.template
 
 import com.dongxiguo.fastring.Fastring.Implicits._
 
 import io.gatling.charts.report.Container.{ Group, Request }
 
-class MenuTemplate {
+private[charts] class MenuTemplate {
   def getOutput: Fastring = fast"""	
 function getItemLink(item){
-	return 'req_' + item.pathFormatted + '.html';
+	return item.pathFormatted + '.html';
 }
 
 function setDetailsLinkUrl(){
@@ -90,7 +91,7 @@ function setDetailsMenu(){
 }
 
 function setGlobalMenu(){
-    $$('.nav ul').append('<li><div class="item"><a href="#active_sessions">Active Sessions</a></div></li> \\
+    $$('.nav ul').append('<li><div class="item"><a href="#active_users">Active Users</a></div></li> \\
         <li><div class="item"><a href="#requests">Requests / sec</a></div></li> \\
         <li><div class="item"><a href="#responses">Responses / sec</a></div></li>');
 }

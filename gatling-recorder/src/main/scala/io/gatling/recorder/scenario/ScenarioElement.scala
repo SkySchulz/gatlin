@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,115 +13,126 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.scenario
 
-import java.net.URI
 import java.nio.charset.Charset
+import java.nio.charset.StandardCharsets.UTF_8
+import java.util.{ Base64, Locale }
+
+import scala.concurrent.duration.FiniteDuration
+import scala.collection.JavaConverters._
 
 import io.gatling.http.HeaderNames._
 import io.gatling.http.HeaderValues._
-
-import scala.collection.breakOut
-import scala.collection.JavaConversions.asScalaBuffer
-import scala.concurrent.duration.FiniteDuration
-import scala.io.Codec.UTF8
-
-import org.jboss.netty.handler.codec.http.{ HttpMessage, HttpRequest, HttpResponse }
-
-import com.ning.http.util.Base64
-
-import io.gatling.http.fetch.{ EmbeddedResource, HtmlParser }
+import io.gatling.http.client.ahc.uri.Uri
+import io.gatling.http.fetch.{ ConcurrentResource, HtmlParser }
 import io.gatling.http.util.HttpHelper.parseFormBody
-import io.gatling.recorder.util.URIHelper
 import io.gatling.recorder.config.RecorderConfiguration
+import io.gatling.recorder.model._
+import io.gatling.http.fetch.{ UserAgent => UserAgentHelper }
 
-case class TimedScenarioElement[+T <: ScenarioElement](sendTime: Long, arrivalTime: Long, element: T)
+import io.netty.handler.codec.http.{ DefaultHttpHeaders, HttpHeaders }
 
-sealed trait RequestBody
-case class RequestBodyParams(params: List[(String, String)]) extends RequestBody
-case class RequestBodyBytes(bytes: Array[Byte]) extends RequestBody
+private[recorder] case class TimedScenarioElement[+T <: ScenarioElement](sendTime: Long, arrivalTime: Long, element: T)
 
-sealed trait ScenarioElement
+private[recorder] sealed trait RequestBody
+private[recorder] case class RequestBodyParams(params: List[(String, String)]) extends RequestBody
+private[recorder] case class RequestBodyBytes(bytes: Array[Byte]) extends RequestBody
 
-case class PauseElement(duration: FiniteDuration) extends ScenarioElement
-case class TagElement(text: String) extends ScenarioElement
+private[recorder] sealed trait ResponseBody
+private[recorder] case class ResponseBodyBytes(bytes: Array[Byte]) extends ResponseBody
 
-object RequestElement {
+private[recorder] sealed trait ScenarioElement
 
-  val HtmlContentType = """(?i)text/html\s*(;\s+charset=(.+))?""".r
+private[recorder] case class PauseElement(duration: FiniteDuration) extends ScenarioElement
+private[recorder] case class TagElement(text: String) extends ScenarioElement
 
-  private def extractContent(message: HttpMessage) =
-    if (message.getContent.readableBytes > 0) {
-      val bufferBytes = new Array[Byte](message.getContent.readableBytes)
-      message.getContent.getBytes(message.getContent.readerIndex, bufferBytes)
-      Some(bufferBytes)
-    } else None
+private[recorder] object RequestElement {
 
-  val ConditionCacheHeaders = Set(IfMatch, IfModifiedSince, IfNoneMatch, IfRange, IfUnmodifiedSince)
+  val CacheHeaders = Set(CacheControl, IfMatch, IfModifiedSince, IfNoneMatch, IfRange, IfUnmodifiedSince)
 
-  def apply(request: HttpRequest, response: HttpResponse): RequestElement = {
-    val requestHeaders: Map[String, String] = request.headers.entries.map { entry => (entry.getKey, entry.getValue) }(breakOut)
-    val requestContentType = requestHeaders.get(ContentType)
-    val requestUserAgent = requestHeaders.get(UserAgent)
-    val responseContentType = Option(response.headers().get(ContentType))
+  private val HtmlContentType = """(?i)text/html\s*;\s+charset=(.+)?""".r
 
-    val embeddedResources = responseContentType.collect {
-      case HtmlContentType(_, headerCharset) =>
-        val charsetName = Option(headerCharset).filter(Charset.isSupported).getOrElse(UTF8.name)
-        val charset = Charset.forName(charsetName)
-        extractContent(response).map(bytes => {
-          val htmlBuff = new String(bytes, charset).toCharArray
-          val userAgent = requestHeaders.get(UserAgent).flatMap(io.gatling.http.fetch.UserAgent.parseFromHeader)
-          new HtmlParser().getEmbeddedResources(new URI(request.getUri), htmlBuff, userAgent)
-        })
-    }.flatten.getOrElse(Nil)
+  def apply(request: HttpRequest, response: HttpResponse)(implicit configuration: RecorderConfiguration): RequestElement = {
+    val requestHeaders = request.headers
 
-    val containsFormParams = requestContentType.exists(_.contains(ApplicationFormUrlEncoded))
+    val requestBody =
+      if (request.body.nonEmpty) {
+        val formUrlEncoded = Option(requestHeaders.get(ContentType)).exists(_.toLowerCase(Locale.ROOT).contains(ApplicationFormUrlEncoded))
+        if (formUrlEncoded)
+          // The payload consists of a Unicode string using only characters in the range U+0000 to U+007F
+          // cf: http://www.w3.org/TR/html5/forms.html#application/x-www-form-urlencoded-decoding-algorithm
+          Some(RequestBodyParams(parseFormBody(new String(request.body, UTF_8.name))))
+        else
+          Some(RequestBodyBytes(request.body))
+      } else {
+        None
+      }
 
-    val requestBody = extractContent(request).map(content =>
-      if (containsFormParams)
-        // The payload consists of a Unicode string using only characters in the range U+0000 to U+007F
-        // cf: http://www.w3.org/TR/html5/forms.html#application/x-www-form-urlencoded-decoding-algorithm
-        RequestBodyParams(parseFormBody(new String(content, UTF8.name)))
-      else
-        RequestBodyBytes(content))
+    val responseBody =
+      if (response.body.nonEmpty) {
+        Some(ResponseBodyBytes(response.body))
+      } else {
+        None
+      }
 
-    val filteredRequestHeaders =
-      if (RecorderConfiguration.configuration.http.removeConditionalCache)
-        requestHeaders.filterKeys(name => !ConditionCacheHeaders.contains(name))
-      else
+    val embeddedResources = Option(response.headers.get(ContentType)).collect {
+      case HtmlContentType(headerCharset) if responseBody.nonEmpty =>
+        val charset = Option(headerCharset).collect { case charsetName if Charset.isSupported(charsetName) => Charset.forName(charsetName) }.getOrElse(UTF_8)
+        val htmlChars = new String(response.body, charset).toCharArray
+        val userAgent = Option(requestHeaders.get(UserAgent)).flatMap(UserAgentHelper.parseFromHeader)
+        new HtmlParser().getEmbeddedResources(Uri.create(request.uri), htmlChars, userAgent)
+    }.getOrElse(Nil)
+
+    val filteredRequestHeaders: HttpHeaders =
+      if (configuration.http.removeCacheHeaders) {
+        val filtered = new DefaultHttpHeaders(false)
+        for {
+          entry <- requestHeaders.entries.asScala
+          if !CacheHeaders.contains(entry.getKey)
+        } filtered.add(entry.getKey, entry.getValue)
+        filtered
+      } else {
         requestHeaders
+      }
 
-    RequestElement(new String(request.getUri), request.getMethod.toString, filteredRequestHeaders, requestBody, response.getStatus.getCode, embeddedResources)
+    new RequestElement(new String(request.uri), request.method, filteredRequestHeaders, requestBody, responseBody, response.status, embeddedResources)
   }
 }
 
-case class RequestElement(uri: String,
-                          method: String,
-                          headers: Map[String, String],
-                          body: Option[RequestBody],
-                          statusCode: Int,
-                          embeddedResources: List[EmbeddedResource],
-                          nonEmbeddedResources: List[RequestElement] = Nil) extends ScenarioElement {
+private[recorder] case class RequestElement(
+    uri:                  String,
+    method:               String,
+    headers:              HttpHeaders,
+    body:                 Option[RequestBody],
+    responseBody:         Option[ResponseBody],
+    statusCode:           Int,
+    embeddedResources:    List[ConcurrentResource],
+    nonEmbeddedResources: List[RequestElement]     = Nil
+) extends ScenarioElement {
 
   val (baseUrl, pathQuery) = {
-    val (rawBaseUrl, pathQuery) = URIHelper.splitURI(uri)
+    val uriComponents = Uri.create(uri)
 
-    val baseUrl = if (rawBaseUrl.startsWith("https://"))
-      rawBaseUrl.stripSuffix(":443")
-    else
-      rawBaseUrl.stripSuffix(":80")
+    val base = new StringBuilder().append(uriComponents.getScheme).append("://").append(uriComponents.getHost)
+    val port = uriComponents.getScheme match {
+      case "http" if !Set(-1, 80).contains(uriComponents.getPort) => ":" + uriComponents.getPort
+      case "https" if !Set(-1, 443).contains(uriComponents.getPort) => ":" + uriComponents.getPort
+      case _ => ""
+    }
+    base.append(port)
 
-    (baseUrl, pathQuery)
+    (base.toString, uriComponents.toRelativeUrl)
   }
-  var printedUrl = uri
+  var printedUrl: String = uri
 
   // TODO NICO mutable external fields are a very bad idea
   var filteredHeadersId: Option[Int] = None
 
   var id: Int = 0
 
-  def setId(id: Int) = {
+  def setId(id: Int): RequestElement = {
     this.id = id
     this
   }
@@ -133,14 +144,14 @@ case class RequestElement(uri: String,
   }
 
   val basicAuthCredentials: Option[(String, String)] = {
-      def parseCredentials(header: String) =
-        new String(Base64.decode(header.split(" ")(1))).split(":") match {
-          case Array(username, password) =>
-            val credentials = (username, password)
-            Some(credentials)
-          case _ => None
-        }
+    def parseCredentials(header: String) =
+      new String(Base64.getDecoder.decode(header.split(" ")(1))).split(":") match {
+        case Array(username, password) =>
+          val credentials = (username, password)
+          Some(credentials)
+        case _ => None
+      }
 
-    headers.get(Authorization).filter(_.startsWith("Basic ")).flatMap(parseCredentials)
+    Option(headers.get(Authorization)).filter(_.startsWith("Basic ")).flatMap(parseCredentials)
   }
 }

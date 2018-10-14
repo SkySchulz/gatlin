@@ -30,7 +30,9 @@ In Gatling, entries in this map are called **Session attributes**.
 .. note::
   Remember that a Gatling scenario is a workflow where every step is backed by an Akka Actor?
 
-  ``Session``\ s are the actual messages that are passed along a scenario workflow.
+  A ``Session`` is actually the message that are passed along a scenario workflow.
+
+.. _session-inject:
 
 Injecting Data
 --------------
@@ -39,19 +41,29 @@ The first step is to inject state into the virtual users.
 
 There's 3 ways of doing that:
 
-  * using :ref:`Feeders <feeder>`
-  * extracting data from responses and saving them, e.g. with :ref:`HTTP Check's saveAs <http-check-saving>`
-  * manually with the Session API
+* using :ref:`Feeders <feeder>`
+* extracting data from responses and saving them, e.g. with :ref:`HTTP Check's saveAs <http-check-saving>`
+* manually with the Session API
+
+.. _session-fetch:
 
 Fetching Data
 -------------
 
-Once you have injected data into your virtual users, you'll naturally want retrieve and use it.
+Once you have injected data into your virtual users, you'll naturally want to retrieve and use it.
 
 There's 2 ways of doing that:
 
-  * using Gatling's :ref:`Expression Language <el>`
-  * manually with the Session API
+* using Gatling's :ref:`Expression Language <el>`
+* manually with the Session API
+
+.. note::
+  If Gatling complains that an attribute could not be found, check that:
+
+  * you don't have a typo in a feeder file header
+  * you don't have a typo in a Gatling EL expression
+  * your feed action is properly called (e.g. could be properly chained with other action because a dot is missing)
+  * the check that should have saved it actually failed
 
 .. _session-api:
 
@@ -66,6 +78,7 @@ Session has the following methods:
 * ``set(key: String, value: Any): Session``: add or replace an attribute
 * ``setAll(newAttributes: (String, Any)*): Session``: bulk add or replace attributes
 * ``setAll(newAttributes: Iterable[(String, Any)]): Session``: same as above but takes an Iterable instead of a varags
+* ``reset``: reset all attributes but loop counters, timestamps and Gatling internals (baseUrl, caches, etc)
 
 .. warning::
   ``Session`` instances are immutable!
@@ -75,58 +88,54 @@ Session has the following methods:
 
   A very common pitfall is to forget that ``set`` and ``setAll`` actually return new instances.
 
-::
-
-  val session: Session = ???
-
-  // wrong usage
-  session.set("foo", "FOO") // wrong: the result of this set call is just discarded
-  session.set("bar", "BAR")
-
-  // proper usage
-  session.set("foo", "FOO").set("bar", "BAR")
+.. includecode:: code/SessionSample.scala#sessions-are-immutable
 
 Getting Attributes
 ------------------
 
 Let's say a Session instance variable named session contains a String attribute named "foo".
-::
 
-	val session: Session = ???
+.. includecode:: code/SessionSample.scala#session
 
-Then::
+Then:
 
-	val attribute: SessionAttribute = session("foo")
-
+.. includecode:: code/SessionSample.scala#session-attribute
 
 .. warning::
   ``session("foo")`` doesn't return the value, but a wrapper.
 
 You can then access methods to retrieve the actual value in several ways:
 
-``session("foo").as[String]``:
+``session("foo").as[Int]``:
 
-	* returns a ``String``,
-	* throws a ``NoSuchElementException`` if the "foo" attribute is undefined,
-	* throws a ``ClassCastException`` if the value is not a String
+* returns a ``Int``,
+* throws a ``NoSuchElementException`` if the *foo* attribute is undefined,
+* throws a ``NumberFormatException`` if the value is a String and can't be parsed into a String,
+* throws a ``ClassCastException`` if the value is not an Int
 
-``session("foo").asOption[String]``:
+``session("foo").asOption[Int]``:
 
-  * returns an ``Option[String]``
-  * which is ``None`` if the "foo" attribute is undefined,
-  * which is ``Some(value)`` otherwise and *value* is indeed a String
-  * throws a ``ClassCastException`` otherwise
+* returns an ``Option[Int]``
+* which is ``None`` if the *foo* attribute is undefined,
+* which is ``Some(value)`` otherwise and *value* is an Int, or is a String that can be parsed into a String,
+* throws a ``NumberFormatException`` if the value is a String and can't be parsed into a String,
+* throws a ``ClassCastException`` otherwise
 
-``session("foo").validate[String]``:
+``session("foo").validate[Int]``:
 
-  * returns an ``Validation[String]``
-  * which is ``Failure(errorMessage)`` if the *"foo"* attribute is undefined
-  * which is ``Failure(errorMessage)`` if the value is not a String
-  * which is ``Success(value)`` otherwise
+* returns an ``Validation[Int]``
+* which is ``Success(value)`` if the *foo* attribute is defined and *value* is an Int or is a String that can be parsed into a String,
+* which is ``Failure(errorMessage)`` otherwise
+
+.. note::
+  Trying to get a ``[String]`` actually performs a ``toString`` conversion and thus, always works as long as the entry is defined.
+
+.. note::
+if the value a ``[String]``, Gatling will try to parse it into a value of the expected type.
 
 .. note::
 
-  Using ``as`` will probably easier for most users.
+  Using ``as`` will probably be easier for most users.
   It will work fine, but the downside is that they might generate lots of expensive exceptions once things starts going wrong under load.
 
   We advise considering ``validate`` once accustomed to functional logic as it deals with unexpected results in a more efficient manner.

@@ -9,12 +9,9 @@ Concepts
 
 The Assertions API is used to verify that global statistics like response time or number of failed requests matches expectations for a whole simulation.
 
-Assertions are registered for a simulation using the method ``assertions`` on the ``setUp``. For example::
+Assertions are registered for a simulation using the method ``assertions`` on the ``setUp``. For example:
 
-	setUp(...).assertions(
-		global.responseTime.max.lessThan(50),
-		global.successfulRequests.percent.greaterThan(95)
-	)
+.. includecode:: code/AssertionSample.scala#setUp
 
 This method takes as many assertions as you like.
 
@@ -32,25 +29,33 @@ Scope
 
 An assertion can test a statistic calculated from all requests or only a part.
 
-``global``: use statistics calculated from all requests.
+* ``global``: use statistics calculated from all requests.
 
-``details(path)``: use statistics calculated from a group or a request. The path is defined like a Unix filesystem path.
-For example, to perform an assertions on the request ``Index`` in the group ``Search``, use::
+* ``forAll``: use statistics calculated for each individual request.
 
-	details("Search" / "Index")
+* ``details(path)``: use statistics calculated from a group or a request. The path is defined like a Unix filesystem path.
+
+For example, to perform an assertion on the request ``Index`` in the group ``Search``, use:
+
+.. includecode:: code/AssertionSample.scala#details
+
+.. note::
+
+  When ``path`` is a group, assertions are made against the group's response time, not its cumulated time.
+  For more information on the distinction between groups response time and cumulated time, see :ref:`the Groups timings documentation <groups-timings>`.
 
 Statistics
 ==========
 
-``responseTime``: target the reponse time in milliseconds.
+* ``responseTime``: target the response time in milliseconds.
 
-``allRequests``: target the number of requests.
+* ``allRequests``: target the number of requests.
 
-``failedRequests``: target the number of failed requests.
+* ``failedRequests``: target the number of failed requests.
 
-``successfulRequests``: target the number of successful requests.
+* ``successfulRequests``: target the number of successful requests.
 
-``requestsPerSec``: target the rate of requests per second.
+* ``requestsPerSec``: target the rate of requests per second.
 
 Selecting the metric
 ====================
@@ -58,71 +63,105 @@ Selecting the metric
 Applicable to response time
 ---------------------------
 
-``min``: perform the assertion on the minimum of the statistic.
+* ``min``: perform the assertion on the minimum of the metric.
 
-``max``: perform the assertion on the maximum of the statistic.
+* ``max``: perform the assertion on the maximum of the metric.
 
-``mean``: perform the assertion on the mean of the statistic.
+* ``mean``: perform the assertion on the mean of the metric.
 
-``stdDev``: perform the assertion on the standard deviation of the statistic.
+* ``stdDev``: perform the assertion on the standard deviation of the metric.
 
-``percentile1``: perform the assertion on the first percentile of the statistic.
+* ``percentile1``: perform the assertion on the 1st percentile of the metric, as configured in ``gatling.conf`` (default is 50th).
 
-``percentile2``: perform the assertion on the second percentile of the statistic.
+* ``percentile2``: perform the assertion on the 2nd percentile of the metric, as configured in ``gatling.conf`` (default is 75th).
+
+* ``percentile3``: perform the assertion on the 3rd percentile of the metric, as configured in ``gatling.conf`` (default is 95th).
+
+* ``percentile4``: perform the assertion on the 4th percentile of the metric, as configured in ``gatling.conf`` (default is 99th).
+
+* ``percentile(value: Double)``: perform the assertion on the given percentile of the metric. Parameter is a percentage, between 0 and 100.
 
 Applicable to number of requests (all, failed or successful)
 ------------------------------------------------------------
 
-``percent``: use the value as a percentage between 0 and 100.
+* ``percent``: use the value as a percentage between 0 and 100.
 
-``count``: perform the assertion directly on the count of requests.
+* ``count``: perform the assertion directly on the count of requests.
 
 Condition
 =========
 
-Conditions can be chained to apply several conditions on the same statistic.
+Conditions can be chained to apply several conditions on the same metric.
 
-``lessThan(threshold)``: check that the value of the statistic is less than the threshold.
+* ``lt(threshold)``: check that the value of the metric is less than the threshold.
 
-``greaterThan(threshold)``: check that the value of the statistic is greater than the threshold.
+* ``lte(threshold)``: check that the value of the metric is less than or equal to the threshold.
 
-``between(thresholdMin, thresholdMax)``: check that the value of the statistic is between two thresholds.
+* ``gt(threshold)``: check that the value of the metric is greater than the threshold.
 
-``is(value)``: check that the value of the statistic is equal to the given value.
+* ``gte(threshold)``: check that the value of the metric is greater than or equal to the threshold.
 
-``in(sequence)``: check that the value of statistic is in a sequence.
+* ``between(thresholdMin, thresholdMax)``: check that the value of the metric is between two thresholds.
 
-``assert(condition, message)``: create a custom condition on the value of the statistic.
+* ``between(thresholdMin, thresholdMax, inclusive = false)``: same as above but doesn't include bounds
 
-The first argument is a function that take an Int (the value of the statistics) and return a Boolean which is the result of the assertion.
+* ``is(value)``: check that the value of the metric is equal to the given value.
 
-The second argument is a function that take a String (the name of the statistic) and a Boolean (result of the assertion) and return a message that describes the assertion as a String.
-
-For example::
-
-	assert(
-		value => value % 2 == 0,
-		(name, result) => name + " is even : " + result)
-
-This will assert that the value is even.
+* ``in(sequence)``: check that the value of metric is in a sequence.
 
 Putting it all together
 =======================
 
 To help you understand how to use assertions, here is a list of examples :
 
+.. includecode:: code/AssertionSample.scala#examples
+
+Reports
+=======
+
+If a simulation defines assertions, Gatling will generate 2 reports in the ``js`` result directory:
+
+* a JSON file
+* a JUnit file
+
+The latter can be used for example with Jenkin's JUnit plugin.
+
+Here are some examples:
+
+.. highlight:: json
+
 ::
 
-  // Assert that the max response time of all requests is less than 100 ms
-  setUp(...).assertions(global.responseTime.max.lessThan(100))
+  [
+    {
+      "path": "Global",
+      "target": "max of response time",
+      "condition": "is less than",
+      "expectedValues": [50],
+      "result": false,
+      "message": "Global: max of response time is less than 50",
+      "actualValue": [145]
+    },
+    {
+      "path": "requestName",
+      "target": "percent of successful requests",
+      "condition": "is greater than",
+      "expectedValues": [95],
+      "result": true,
+      "message": "requestName: percent of successful requests is greater than 95",
+      "actualValue": [100]
+    }
+  ]
 
-  // Assert that the percentage of failed requests named "Index" in the group "Search"
-  // is exactly 0 %
-  setUp(...).assertions(details("Search" / "Index").failedRequests.percent.is(0))
+.. highlight:: xml
 
-  // Assert that the rate of requests per seconds for the group "Search"
-  // is between 100 and 1000
-  setUp(...).assertions(details("Search").requestsPerSec.greaterThan(100).lessThan(1000))
+::
 
-  // Same as above but using between
-  setUp(...).assertions(details("Search").requestsPerSec.between(100, 1000))
+  <testsuite name="GoogleTest" tests="2" errors="0" failures="1" time="0">
+    <testcase name="Global: max of response time is less than 50" status="false" time="0">
+      <failure type="Global">Actual value: 145</failure>
+    </testcase>
+    <testcase name="selfSigned: percent of successful requests is greater than 95" status="true" time="0">
+      <system-out>selfSigned: percent of successful requests is greater than 95</system-out>
+    </testcase>
+  </testsuite>

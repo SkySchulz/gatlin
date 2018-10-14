@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,123 +13,119 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.fetch
 
-import java.net.URI
-
 import scala.io.Codec.UTF8
+import scala.io.Source
 
-import org.junit.runner.RunWith
-import org.specs2.mutable.Specification
-import org.specs2.runner.JUnitRunner
+import io.gatling.BaseSpec
+import io.gatling.commons.util.Io._
+import io.gatling.http.client.ahc.uri.Uri
 
-import io.gatling.core.util.IO._
+class HtmlParserSpec extends BaseSpec {
 
-import com.dongxiguo.fastring.Fastring.Implicits._
+  private val htmlContent = withCloseable(getClass.getClassLoader.getResourceAsStream("akka.io.html")) { is =>
+    Source.fromInputStream(is)(UTF8).getLines().mkString.toCharArray
+  }
 
-@RunWith(classOf[JUnitRunner])
-class HtmlParserSpec extends Specification {
-
-  "parsing Akka.io page" should {
-
-    val htmlContent = withCloseable(getClass.getClassLoader.getResourceAsStream("akka.io.html")) {
-      _.toCharArray(UTF8.charSet)
-    }
-
-      def mockHtml(body: String): Array[Char] = {
-        fast"""<!DOCTYPE html>
+  private def mockHtml(body: String): Array[Char] =
+    s"""<!DOCTYPE html>
       <html>
         <body>
           $body
         </body>
       </html>
-      """.toString.toCharArray
-      }
+      """.toCharArray
 
-      implicit def string2URI(string: String) = URI.create(string)
+  private def embeddedResources(documentUri: String, htmlContent: Array[Char], userAgent: Option[UserAgent]) =
+    new HtmlParser().getEmbeddedResources(Uri.create(documentUri), htmlContent, userAgent)
 
-    "extract all urls" in {
-      new HtmlParser().getEmbeddedResources(new URI("http://akka.io"), htmlContent, None) must beEqualTo(List(
-        RegularResource("http://akka.io/resources/favicon.ico"),
-        CssResource("http://akka.io/resources/stylesheets/style.css"),
-        CssResource("http://fonts.googleapis.com/css?family=Exo:300,400,600,700"),
-        CssResource("http://akka.io/resources/stylesheets/prettify-frontpage.css"),
-        CssResource("http://akka.io/resources/stylesheets/base.css"),
-        RegularResource("http://akka.io/resources/images/logo-small.png"),
-        RegularResource("http://akka.io/resources/images/logo_dropshadow.png"),
-        RegularResource("http://akka.io/resources/images/scala-sm.png"),
-        RegularResource("http://akka.io/resources/images/ubs.png"),
-        RegularResource("http://akka.io/resources/images/klout.png"),
-        RegularResource("http://akka.io/resources/images/ign.png"),
-        RegularResource("http://akka.io/resources/images/tdc.png"),
-        RegularResource("http://akka.io/resources/images/vmware.png"),
-        RegularResource("http://akka.io/resources/images/csc.png"),
-        RegularResource("http://akka.io/resources/images/moshimonsters.png"),
-        RegularResource("http://akka.io/resources/images/amazon.png"),
-        RegularResource("http://akka.io/resources/images/zeebox.png"),
-        RegularResource("http://akka.io/resources/images/creditsuisse.png"),
-        RegularResource("http://akka.io/resources/images/autodesk.png"),
-        RegularResource("http://akka.io/resources/images/atos.png"),
-        RegularResource("http://akka.io/resources/images/blizzard.png"),
-        RegularResource("http://akka.io/resources/images/rss.png"),
-        RegularResource("http://akka.io/resources/images/watermark.png"),
-        RegularResource("http://akka.io/resources/javascript/jquery.js"),
-        RegularResource("http://akka.io/resources/javascript/prettify.js"),
-        RegularResource("http://akka.io/resources/javascript/slideleft.js"),
-        RegularResource("http://akka.io/resources/javascript/jquery.livetwitter.js"),
-        RegularResource("http://akka.io/resources/javascript/livetwitter.js"),
-        RegularResource("http://akka.io/resources/javascript/jquery.rss.min.js"),
-        RegularResource("http://akka.io/resources/javascript/blogfeed.js"),
-        RegularResource("http://akka.io/resources/javascript/moment.js"),
-        RegularResource("http://akka.io/resources/javascript/dateparse.js"),
-        RegularResource("http://akka.io/resources/javascript/jquery.scrollTo-1.4.2-min.js"),
-        RegularResource("http://akka.io/resources/javascript/jquery.localscroll-1.2.7-min.js"),
-        RegularResource("http://akka.io/resources/javascript/jquery.serialScroll-1.2.2-min.js"),
-        RegularResource("http://akka.io/resources/javascript/sliderbox.js")))
-    }
+  private implicit def string2Uri(string: String): Uri = Uri.create(string)
 
-    "extract IE css" in {
-      val html = mockHtml(
-        """
+  "parsing akka.io page" should "extract all urls" in {
+    embeddedResources("http://akka.io", htmlContent, None) shouldBe List(
+      BasicResource("http://akka.io/resources/favicon.ico"),
+      CssResource("http://akka.io/resources/stylesheets/style.css"),
+      CssResource("http://fonts.googleapis.com/css?family=Exo:300,400,600,700"),
+      CssResource("http://akka.io/resources/stylesheets/prettify-frontpage.css"),
+      CssResource("http://akka.io/resources/stylesheets/base.css"),
+      BasicResource("http://akka.io/resources/images/logo-small.png"),
+      BasicResource("http://akka.io/resources/images/logo_dropshadow.png"),
+      BasicResource("http://akka.io/resources/images/scala-sm.png"),
+      BasicResource("http://akka.io/resources/images/ubs.png"),
+      BasicResource("http://akka.io/resources/images/klout.png"),
+      BasicResource("http://akka.io/resources/images/ign.png"),
+      BasicResource("http://akka.io/resources/images/tdc.png"),
+      BasicResource("http://akka.io/resources/images/vmware.png"),
+      BasicResource("http://akka.io/resources/images/csc.png"),
+      BasicResource("http://akka.io/resources/images/moshimonsters.png"),
+      BasicResource("http://akka.io/resources/images/amazon.png"),
+      BasicResource("http://akka.io/resources/images/zeebox.png"),
+      BasicResource("http://akka.io/resources/images/creditsuisse.png"),
+      BasicResource("http://akka.io/resources/images/autodesk.png"),
+      BasicResource("http://akka.io/resources/images/atos.png"),
+      BasicResource("http://akka.io/resources/images/blizzard.png"),
+      BasicResource("http://akka.io/resources/images/rss.png"),
+      BasicResource("http://akka.io/resources/images/watermark.png"),
+      BasicResource("http://akka.io/resources/javascript/jquery.js"),
+      BasicResource("http://akka.io/resources/javascript/prettify.js"),
+      BasicResource("http://akka.io/resources/javascript/slideleft.js"),
+      BasicResource("http://akka.io/resources/javascript/jquery.livetwitter.js"),
+      BasicResource("http://akka.io/resources/javascript/livetwitter.js"),
+      BasicResource("http://akka.io/resources/javascript/jquery.rss.min.js"),
+      BasicResource("http://akka.io/resources/javascript/blogfeed.js"),
+      BasicResource("http://akka.io/resources/javascript/moment.js"),
+      BasicResource("http://akka.io/resources/javascript/dateparse.js"),
+      BasicResource("http://akka.io/resources/javascript/jquery.scrollTo-1.4.2-min.js"),
+      BasicResource("http://akka.io/resources/javascript/jquery.localscroll-1.2.7-min.js"),
+      BasicResource("http://akka.io/resources/javascript/jquery.serialScroll-1.2.2-min.js"),
+      BasicResource("http://akka.io/resources/javascript/sliderbox.js")
+    )
+  }
+
+  it should "extract IE css" in {
+    val html = mockHtml(
+      """
           <!--[if IE 9]>
             <link rel="stylesheet" type="text/css" href="style.css">
           <![endif]-->
-        """)
+      """
+    )
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, Some(UserAgent(UserAgent.IE, 9))) must beEqualTo(
-        List(CssResource("http://example.com/style.css")))
-    }
+    embeddedResources("http://example.com/", html, Some(UserAgent(UserAgent.IE, 9))) shouldBe List(CssResource("http://example.com/style.css"))
+  }
 
-    "not extract IE css" in {
-      val html = mockHtml(
-        """
+  it should "not extract IE css" in {
+    val html = mockHtml(
+      """
         <!--[if IE 6]>
           <link rel="stylesheet" type="text/css" href="style.css">
         <![endif]-->
-      """)
+      """
+    )
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, Some(UserAgent(UserAgent.IE, 9))) must beEqualTo(
-        Nil)
-    }
+    embeddedResources("http://example.com/", html, Some(UserAgent(UserAgent.IE, 9))) shouldBe empty
+  }
 
-    "extract style for IE 7" in {
-      val html = mockHtml(
-        """
+  it should "extract style for IE 7" in {
+    val html = mockHtml(
+      """
         <!--[if IE 6]>
           <link rel="stylesheet" type="text/css" href="style6.css">
         <![endif]-->
         <!--[if IE 7]>
           <link rel="stylesheet" type="text/css" href="style7.css">
         <![endif]-->
-      """)
+      """
+    )
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, Some(UserAgent(UserAgent.IE, 7))) must beEqualTo(
-        List(CssResource("http://example.com/style7.css")))
-    }
+    embeddedResources("http://example.com/", html, Some(UserAgent(UserAgent.IE, 7))) shouldBe List(CssResource("http://example.com/style7.css"))
+  }
 
-    "parse nexted conditional comments" in {
-      val html = mockHtml(
-        """
+  it should "parse nexted conditional comments" in {
+    val html = mockHtml(
+      """
         <!--[if gt IE 6]>
           <!--[if lte IE 8]>
             <!--[if lte IE 7]>
@@ -141,56 +137,51 @@ class HtmlParserSpec extends Specification {
 
           <link rel="stylesheet" type="text/css" href="style9.css">
         <![endif]-->
-      """)
+      """
+    )
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, Some(UserAgent(UserAgent.IE, 9))) must beEqualTo(
-        List(CssResource("http://example.com/style9.css")))
+    embeddedResources("http://example.com/", html, Some(UserAgent(UserAgent.IE, 9))) shouldBe List(CssResource("http://example.com/style9.css"))
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, Some(UserAgent(UserAgent.IE, 8))) must beEqualTo(
-        List(
-          CssResource("http://example.com/style8.css"),
-          CssResource("http://example.com/style9.css")))
-    }
+    embeddedResources("http://example.com/", html, Some(UserAgent(UserAgent.IE, 8))) shouldBe List(CssResource("http://example.com/style8.css"), CssResource("http://example.com/style9.css"))
+  }
 
-    "parse nested conditional comments with alternative syntax" in {
-      val html = mockHtml(
-        """
+  it should "parse nested conditional comments with alternative syntax" in {
+    val html = mockHtml(
+      """
         <!--[if gt IE 5]>
         <![if lt IE 6]>
           <link rel="stylesheet" type="text/css" href="style55.css">
         <![endif]
         <![endif]-->
-      """)
+      """
+    )
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, Some(UserAgent(UserAgent.IE, 5.5f))) must beEqualTo(
-        List(CssResource("http://example.com/style55.css")))
+    embeddedResources("http://example.com/", html, Some(UserAgent(UserAgent.IE, 5.5f))) shouldBe List(CssResource("http://example.com/style55.css"))
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, Some(UserAgent(UserAgent.IE, 6))) must beEqualTo(
-        Nil)
-    }
+    embeddedResources("http://example.com/", html, Some(UserAgent(UserAgent.IE, 6))) shouldBe empty
+  }
 
-    "ignore nested conditional comments for None UserAgent" in {
-      val html = mockHtml(
-        """
+  it should "ignore nested conditional comments for None UserAgent" in {
+    val html = mockHtml(
+      """
         <!--[if gt IE 5]>
           <link rel="stylesheet" type="text/css" href="style.css">
         <![endif]-->
-        """)
+      """
+    )
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, None) must beEqualTo(
-        Nil)
-    }
+    embeddedResources("http://example.com/", html, None) shouldBe empty
+  }
 
-    "ignore nested conditional comments for user agents other than MSIE" in {
-      val html = mockHtml(
-        """
+  it should "ignore nested conditional comments for user agents other than MSIE" in {
+    val html = mockHtml(
+      """
         <!--[if gt IE 5]>
           <link rel="stylesheet" type="text/css" href="style.css">
         <![endif]-->
-        """)
+      """
+    )
 
-      new HtmlParser().getEmbeddedResources(new URI("http://example.com/"), html, Some(UserAgent("Firefox", 29.0f))) must beEqualTo(
-        Nil)
-    }
+    embeddedResources("http://example.com/", html, Some(UserAgent("Firefox", 29.0f))) shouldBe empty
   }
 }

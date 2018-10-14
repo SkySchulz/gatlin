@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,36 +13,67 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.action
 
-import akka.actor.{ Actor, ActorRef }
-import akka.actor.ActorDSL.actor
-import io.gatling.core.session.{ LoopBlock, Expression, Session }
+import io.gatling.commons.util.Clock
+import io.gatling.core.session.{ Expression, LoopBlock, Session }
+import io.gatling.core.stats.StatsEngine
 
-/**
- * Action in charge of controlling a while loop execution.
- *
- * @constructor creates a Loop in the scenario
- * @param continueCondition the condition that decides when to exit the loop
- * @param counterName the name of the counter for this loop
- * @param next the chain executed if testFunction evaluates to false
- */
-class Loop(continueCondition: Expression[Boolean], counterName: String, exitASAP: Boolean, next: ActorRef) extends Actor {
+import akka.actor.ActorSystem
 
-  var innerLoop: ActorRef = _
+class Loop(
+    continueCondition:          Expression[Boolean],
+    counterName:                String,
+    exitASAP:                   Boolean,
+    timeBased:                  Boolean,
+    evaluateConditionAfterLoop: Boolean,
+    statsEngine:                StatsEngine,
+    clock:                      Clock,
+    override val name:          String,
+    next:                       Action
+) extends Action {
 
-  val initialized: Receive = Interruptable.TheInterrupt orElse { case m => innerLoop forward m }
+  private[this] var innerLoop: Action = _
 
-  val uninitialized: Receive = {
-    case loopNext: ActorRef =>
-      innerLoop = actor(new InnerLoop(continueCondition, loopNext, counterName, exitASAP, next))
-      context.become(initialized)
+  private[core] def initialize(loopNext: Action, actorSystem: ActorSystem): Unit = {
+
+    val counterIncrement = (session: Session) =>
+      if (session.contains(counterName)) {
+        session.incrementCounter(counterName)
+      } else if (timeBased) {
+        session.enterTimeBasedLoop(counterName, continueCondition, next, exitASAP, clock.nowMillis)
+      } else {
+        session.enterLoop(counterName, continueCondition, next, exitASAP)
+      }
+
+    innerLoop = new InnerLoop(continueCondition, loopNext, counterIncrement, counterName, evaluateConditionAfterLoop, actorSystem, name + "-inner", next)
   }
 
-  override def receive = uninitialized
+  override def execute(session: Session): Unit =
+    if (BlockExit.noBlockExitTriggered(session, statsEngine, clock.nowMillis)) {
+      innerLoop ! session
+    }
 }
 
-class InnerLoop(continueCondition: Expression[Boolean], loopNext: ActorRef, counterName: String, exitASAP: Boolean, val next: ActorRef) extends Chainable {
+class InnerLoop(
+    continueCondition:          Expression[Boolean],
+    loopNext:                   Action,
+    counterIncrement:           Session => Session,
+    counterName:                String,
+    evaluateConditionAfterLoop: Boolean,
+    actorSystem:                ActorSystem,
+    val name:                   String,
+    val next:                   Action
+) extends ChainableAction {
+
+  private[this] val lastUserIdThreadLocal = new ThreadLocal[Long]
+
+  private[this] def getAndSetLastUserId(session: Session): Long = {
+    val lastUserId = lastUserIdThreadLocal.get()
+    lastUserIdThreadLocal.set(session.userId)
+    lastUserId
+  }
 
   /**
    * Evaluates the condition and if true executes the first action of loopNext
@@ -51,17 +82,24 @@ class InnerLoop(continueCondition: Expression[Boolean], loopNext: ActorRef, coun
    * @param session the session of the virtual user
    */
   def execute(session: Session): Unit = {
+    val incrementedSession = counterIncrement(session)
+    val lastUserId = getAndSetLastUserId(session)
 
-    val incrementedSession =
-      if (!session.contains(counterName))
-        session.enterLoop(counterName, continueCondition, self, exitASAP)
-      else
-        session.incrementCounter(counterName)
+    // checking if we don't need to evaluate the condition the first time
+    if ((incrementedSession.attributes(counterName) == 0 && evaluateConditionAfterLoop)
+      || LoopBlock.continue(continueCondition, incrementedSession)) {
 
-    if (LoopBlock.continue(continueCondition, incrementedSession))
-      // TODO maybe find a way not to reevaluate in case of exitASAP
-      loopNext ! incrementedSession
-    else
+      if (incrementedSession.userId == lastUserId) {
+        // except if we're running only one user, it's very likely we're hitting an empty loop
+        // let's dispatch so we don't spin
+        actorSystem.dispatcher.execute(() => loopNext ! incrementedSession)
+
+      } else {
+        loopNext ! incrementedSession
+      }
+
+    } else {
       next ! incrementedSession.exitLoop
+    }
   }
 }

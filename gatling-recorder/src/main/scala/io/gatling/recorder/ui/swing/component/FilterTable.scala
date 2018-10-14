@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *                 http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,19 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.ui.swing.component
 
 import java.awt.Color
-import java.awt.event.{ ActionEvent, ActionListener }
 
 import scala.swing.{ Component, Dimension, ScrollPane, Table }
 import scala.swing.event.{ MouseButtonEvent, MouseEvent }
 import scala.util.{ Failure, Try }
 
+import io.gatling.commons.util.Throwables._
+
 import javax.swing.{ JMenuItem, JPopupMenu }
 import javax.swing.table.DefaultTableModel
 
-class FilterTable(headerTitle: String) extends ScrollPane {
+private[swing] class FilterTable(headerTitle: String) extends ScrollPane {
 
   private val table = new Table {
     override def rendererComponent(isSelected: Boolean, focused: Boolean, row: Int, column: Int): Component = {
@@ -41,7 +43,7 @@ class FilterTable(headerTitle: String) extends ScrollPane {
   model.addColumn(headerTitle)
   table.model = model
   table.rowHeight = 30
-  preferredSize = new Dimension(200, 300)
+  preferredSize = new Dimension(300, 200)
   initPopupMenu()
 
   def cleanUp(): Unit = {
@@ -54,11 +56,11 @@ class FilterTable(headerTitle: String) extends ScrollPane {
     removeDuplicates()
   }
 
-  def validate: List[String] =
+  def verify: List[String] =
     getRegexs
       .map { str => (str, Try(str.r)) }
       .collect {
-        case (str, fail: Failure[_]) => s"$str is not a valid regular expression: ${fail.exception.getMessage}"
+        case (str, fail: Failure[_]) => s"$str is not a valid regular expression: ${fail.exception.rootMessage}"
       }
 
   def removeRows(toRemove: Seq[Int]): Unit = {
@@ -98,18 +100,16 @@ class FilterTable(headerTitle: String) extends ScrollPane {
 
   def setFocusable(focusable: Boolean): Unit = { table.focusable = focusable }
 
-  def getRowCount = model.getRowCount
+  def getRowCount: Int = model.getRowCount
 
-  def getRegex(row: Int) = table(row, 0).asInstanceOf[String]
+  def getRegex(row: Int): String = table(row, 0).asInstanceOf[String]
 
-  def getRegexs = (for (i <- 0 until getRowCount) yield getRegex(i)).toList
+  def getRegexs: List[String] = (for (i <- 0 until getRowCount) yield getRegex(i)).toList
 
   private def initPopupMenu(): Unit = {
     val popup = new JPopupMenu
     val menuItem = new JMenuItem("Delete")
-    menuItem.addActionListener(new ActionListener {
-      def actionPerformed(e: ActionEvent): Unit = removeSelectedRow()
-    })
+    menuItem.addActionListener(_ => removeSelectedRow())
 
     popup.add(menuItem)
 
@@ -119,8 +119,8 @@ class FilterTable(headerTitle: String) extends ScrollPane {
       case e: MouseButtonEvent => maybeShowPopup(e)
     }
 
-      def maybeShowPopup(e: MouseEvent): Unit =
-        if (e.peer.isPopupTrigger)
-          popup.show(e.peer.getComponent, e.peer.getX, e.peer.getY)
+    def maybeShowPopup(e: MouseEvent): Unit =
+      if (e.peer.isPopupTrigger)
+        popup.show(e.peer.getComponent, e.peer.getX, e.peer.getY)
   }
 }

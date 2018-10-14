@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,16 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.check.extractor.css
 
 import jodd.lagarto.LagartoParser
-import jodd.lagarto.dom.{ LagartoDomBuilderConfig, LagartoDOMBuilder }
+import jodd.lagarto.dom.{ LagartoDOMBuilder, LagartoDomBuilderConfig }
 import jodd.log.LoggerFactory
-import jodd.log.impl.Slf4jLoggerFactory
+import jodd.log.impl.Slf4jLogger
 
 object Jodd {
 
-  LoggerFactory.setLoggerFactory(new Slf4jLoggerFactory)
+  LoggerFactory.setLoggerProvider(Slf4jLogger.PROVIDER)
 
   val IeVersionDroppingCc = 10.0
 
@@ -31,7 +32,7 @@ object Jodd {
       .setParsingErrorLogLevelName("INFO")
       .setCaseSensitive(false)
 
-  val JoddConfig = joddConfigBase
+  private val JoddConfig = joddConfigBase
     .setEnableConditionalComments(false)
 
   def getJoddConfig(ieVersion: Option[Float]): LagartoDomBuilderConfig =
@@ -51,7 +52,7 @@ object Jodd {
   }
 
   def newLagartoParser(chars: Array[Char], ieVersion: Option[Float]): LagartoParser = {
-    val lagartoParser = new LagartoParser(chars, false)
+    val lagartoParser = new LagartoParser(chars)
     lagartoParser.setConfig(getJoddConfig(ieVersion))
     lagartoParser
   }

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,50 +13,65 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.scenario
 
-import java.io.{ FileOutputStream, IOException }
+import java.io.{ File, IOException }
+import java.nio.file.Path
+import java.util.Locale
 
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 import scala.collection.immutable.SortedMap
-import scala.reflect.io.Path.string2path
-import scala.tools.nsc.io.{ Directory, File }
 
-import com.typesafe.scalalogging.slf4j.StrictLogging
-
-import io.gatling.core.util.IO._
-import io.gatling.core.validation._
-import io.gatling.http.HeaderNames
+import io.gatling.commons.util.Io._
+import io.gatling.commons.util.PathHelper._
+import io.gatling.commons.validation._
+import io.gatling.http.{ HeaderNames, HeaderValues }
 import io.gatling.recorder.config.RecorderConfiguration
-import io.gatling.recorder.har.HarReader
+import io.gatling.recorder.har._
 import io.gatling.recorder.scenario.template.SimulationTemplate
+import io.gatling.recorder.util.HttpUtils._
 
-object ScenarioExporter extends StrictLogging {
+import com.dongxiguo.fastring.Fastring.Implicits._
+import com.typesafe.scalalogging.StrictLogging
+import io.netty.handler.codec.http.{ DefaultHttpHeaders, HttpHeaders, HttpMethod }
+
+private[recorder] object ScenarioExporter extends StrictLogging {
 
   private val EventsGrouping = 100
 
-  def simulationFilePath(implicit config: RecorderConfiguration) = {
-      def getSimulationFileName: String = s"${config.core.className}.scala"
-      def getOutputFolder = {
-        val path = config.core.outputFolder + File.separator + config.core.pkg.replace(".", File.separator)
-        getFolder(path)
-      }
+  def simulationFilePath(implicit config: RecorderConfiguration): Path = {
+    def getSimulationFileName: String = s"${config.core.className}.scala"
+    def getSimulationsFolder = {
+      val path = config.core.simulationsFolder + File.separator + config.core.pkg.replace(".", File.separator)
+      getFolder(path)
+    }
 
-    getOutputFolder / getSimulationFileName
+    getSimulationsFolder / getSimulationFileName
   }
 
+  def requestBodyFileName(request: RequestElement)(implicit config: RecorderConfiguration) =
+    f"${config.core.className}_${request.id.leftPad(4, '0')}_request.txt"
+
+  def responseBodyFileName(request: RequestElement)(implicit config: RecorderConfiguration) =
+    f"${config.core.className}_${request.id.leftPad(4, '0')}_response.txt"
+
   def exportScenario(harFilePath: String)(implicit config: RecorderConfiguration): Validation[Unit] =
-    try {
-      val har = HarReader(harFilePath)
-      if (har.elements.isEmpty) {
+    safely(error => s"Error while processing HAR file: $error") {
+      val transactions = HarReader.readFile(harFilePath, config.filters.filters)
+
+      if (transactions.isEmpty) {
         "the selected file doesn't contain any valid HTTP requests".failure
       } else {
-        ScenarioExporter.saveScenario(har).success
+        val scenarioElements = transactions.map {
+          case HttpTransaction(request, response) =>
+            val element = RequestElement(request, response)
+            TimedScenarioElement(request.timestamp, response.timestamp, element)
+        }
+
+        ScenarioExporter.saveScenario(ScenarioDefinition(scenarioElements, tags = Nil)).success
       }
-    } catch {
-      case e: Exception =>
-        logger.error("Error while processing HAR file", e)
-        e.getMessage.failure
     }
 
   def saveScenario(scenarioElements: ScenarioDefinition)(implicit config: RecorderConfiguration): Unit = {
@@ -64,7 +79,7 @@ object ScenarioExporter extends StrictLogging {
 
     val output = renderScenarioAndDumpBodies(scenarioElements)
 
-    withCloseable(new FileOutputStream(File(simulationFilePath).jfile)) {
+    withCloseable(simulationFilePath.outputStream) {
       _.write(output.getBytes(config.core.encoding))
     }
   }
@@ -75,58 +90,68 @@ object ScenarioExporter extends StrictLogging {
       (if (config.http.automaticReferer) Set(HeaderNames.Referer) else Set.empty)
 
     val scenarioElements = scenario.elements
-    val requestElements = scenarioElements.collect { case req: RequestElement => req :: req.nonEmbeddedResources }.flatten
-    val baseUrl = getBaseUrl(requestElements)
+    val mainRequestElements = scenarioElements.collect { case req: RequestElement => req }
+    val requestElements = mainRequestElements.flatMap(req => req :: req.nonEmbeddedResources)
+    val baseUrl = getBaseUrl(mainRequestElements)
     val baseHeaders = getBaseHeaders(requestElements)
     val protocolConfigElement = new ProtocolDefinition(baseUrl, baseHeaders)
 
     // extract the request elements and set all the necessary
     val elements = scenarioElements.map {
-      case reqEl: RequestElement => reqEl.makeRelativeTo(baseUrl)
-      case el                    => el
+      case reqEl: RequestElement =>
+        reqEl.nonEmbeddedResources.foreach(_.makeRelativeTo(baseUrl))
+        reqEl.makeRelativeTo(baseUrl)
+      case el => el
     }
 
     // FIXME mutability!!!
     requestElements.zipWithIndex.map { case (reqEl, index) => reqEl.setId(index) }
 
-    // dump request body if needed
-    requestElements.foreach(el => el.body.foreach {
-      case RequestBodyBytes(bytes) => dumpRequestBody(el.id, bytes, config.core.className)
-      case _                       =>
-    })
+    // dump request & response bodies if needed
+    if (config.http.checkResponseBodies) {
+      requestElements.foreach(el => el.responseBody.foreach {
+        case ResponseBodyBytes(bytes) => dumpBody(responseBodyFileName(el), bytes)
+        case _                        =>
+      })
+    }
 
     val headers: Map[Int, Seq[(String, String)]] = {
 
-        @tailrec
-        def generateHeaders(elements: Seq[RequestElement], headers: Map[Int, List[(String, String)]]): Map[Int, List[(String, String)]] = elements match {
-          case Seq() => headers
-          case element +: others =>
-            val acceptedHeaders = element.headers.toList
-              .filterNot {
-                case (headerName, headerValue) => filteredHeaders.contains(headerName) || baseHeaders.get(headerName).exists(_ == headerValue)
-              }
-              .sortBy(_._1)
-
-            val newHeaders = if (acceptedHeaders.isEmpty) {
-              element.filteredHeadersId = None
-              headers
-
-            } else {
-              val headersSeq = headers.toSeq
-              headersSeq.indexWhere {
-                case (id, existingHeaders) => existingHeaders == acceptedHeaders
-              } match {
-                case -1 =>
-                  element.filteredHeadersId = Some(element.id)
-                  headers + (element.id -> acceptedHeaders)
-                case index =>
-                  element.filteredHeadersId = Some(headersSeq(index)._1)
-                  headers
-              }
+      @tailrec
+      def generateHeaders(elements: Seq[RequestElement], headers: Map[Int, List[(String, String)]]): Map[Int, List[(String, String)]] = elements match {
+        case Seq() => headers
+        case element +: others =>
+          val acceptedHeaders = element.headers.entries.asScala.map(e => e.getKey -> e.getValue).toList
+            .filterNot {
+              case (headerName, headerValue) =>
+                val isFiltered = containsIgnoreCase(filteredHeaders, headerName) || isHttp2PseudoHeader(headerName)
+                val isAlreadyInBaseHeaders = getIgnoreCase(baseHeaders, headerName).contains(headerValue)
+                val isPostWithFormParams = element.method == HttpMethod.POST.name() && headerValue.toLowerCase(Locale.ROOT).contains(HeaderValues.ApplicationFormUrlEncoded)
+                val isEmptyContentLength = headerName.equalsIgnoreCase(HeaderNames.ContentLength) && headerValue == "0"
+                isFiltered || isAlreadyInBaseHeaders || isPostWithFormParams || isEmptyContentLength
             }
+            .sortBy(_._1)
 
-            generateHeaders(others, newHeaders)
-        }
+          val newHeaders = if (acceptedHeaders.isEmpty) {
+            element.filteredHeadersId = None
+            headers
+
+          } else {
+            val headersSeq = headers.toSeq
+            headersSeq.indexWhere {
+              case (_, existingHeaders) => existingHeaders == acceptedHeaders
+            } match {
+              case -1 =>
+                element.filteredHeadersId = Some(element.id)
+                headers + (element.id -> acceptedHeaders)
+              case index =>
+                element.filteredHeadersId = Some(headersSeq(index)._1)
+                headers
+            }
+          }
+
+          generateHeaders(others, newHeaders)
+      }
 
       SortedMap(generateHeaders(requestElements, Map.empty).toSeq: _*)
     }
@@ -136,33 +161,30 @@ object ScenarioExporter extends StrictLogging {
     SimulationTemplate.render(config.core.pkg, config.core.className, protocolConfigElement, headers, config.core.className, newScenarioElements)
   }
 
-  private def getBaseHeaders(requestElements: Seq[RequestElement]): Map[String, String] = {
+  private def getBaseHeaders(requestElements: Seq[RequestElement]): HttpHeaders = {
 
-      def getMostFrequentHeaderValue(headerName: String): Option[String] = {
-        val headers = requestElements.flatMap {
-          _.headers.collect { case (name, value) if name == headerName => value }
-        }
+    def getMostFrequentHeaderValue(headerName: String): Option[String] = {
+      val headers = requestElements.flatMap(_.headers.getAll(headerName).asScala)
 
-        if (headers.isEmpty) None
-        else {
-          val headersValuesOccurrences = headers.groupBy(identity).mapValues(_.size).toSeq
-          val mostFrequentValue = headersValuesOccurrences.maxBy(_._2)._1
-          Some(mostFrequentValue)
-        }
+      if (headers.isEmpty || headers.length != requestElements.length)
+        // a header has to be defined on all requestElements to be turned into a common one
+        None
+      else {
+        val headersValuesOccurrences = headers.groupBy(identity).mapValues(_.size).toSeq
+        val mostFrequentValue = headersValuesOccurrences.maxBy(_._2)._1
+        Some(mostFrequentValue)
       }
+    }
 
-      def addHeader(appendTo: Map[String, String], headerName: String): Map[String, String] =
-        getMostFrequentHeaderValue(headerName)
-          .map(headerValue => appendTo + (headerName -> headerValue))
-          .getOrElse(appendTo)
-
-      @tailrec
-      def resolveBaseHeaders(headers: Map[String, String], headerNames: List[String]): Map[String, String] = headerNames match {
-        case Nil                  => headers
-        case headerName :: others => resolveBaseHeaders(addHeader(headers, headerName), others)
+    val baseHeaders = new DefaultHttpHeaders(false)
+    ProtocolDefinition.BaseHeadersAndProtocolMethods.names().asScala.foreach { headerName =>
+      getMostFrequentHeaderValue(headerName) match {
+        case Some(mostFrequentValue) => baseHeaders.add(headerName, mostFrequentValue)
+        case _                       =>
       }
+    }
 
-    resolveBaseHeaders(Map.empty, ProtocolDefinition.baseHeaders.keySet.toList)
+    baseHeaders
   }
 
   private def getBaseUrl(requestElements: Seq[RequestElement]): String = {
@@ -177,16 +199,14 @@ object ScenarioExporter extends StrictLogging {
     else
       Left(scenarioElements)
 
-  private def dumpRequestBody(idEvent: Int, content: Array[Byte], simulationClass: String)(implicit config: RecorderConfiguration): Unit = {
-    val fileName = s"${simulationClass}_request_$idEvent.txt"
-    withCloseable(File(getFolder(config.core.requestBodiesFolder) / fileName).outputStream()) { fw =>
+  private def dumpBody(fileName: String, content: Array[Byte])(implicit config: RecorderConfiguration): Unit = {
+    withCloseable((getFolder(config.core.resourcesFolder) / fileName).outputStream) { fw =>
       try {
         fw.write(content)
       } catch {
-        case e: IOException => logger.error("Error, while dumping request body...", e)
+        case e: IOException => logger.error(s"Error, while dumping body $fileName...", e)
       }
     }
   }
-
-  private def getFolder(folderPath: String) = Directory(folderPath).createDirectory()
+  private def getFolder(folderPath: String) = string2path(folderPath).mkdirs
 }

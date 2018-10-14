@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,126 +13,138 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.fetch
 
-import java.net.URI
-
 import scala.annotation.{ switch, tailrec }
-import scala.collection.TraversableOnce.flattenTraversableOnce
 import scala.util.matching.Regex
 
-import com.typesafe.scalalogging.slf4j.StrictLogging
-
-import io.gatling.core.util.StringHelper.RichString
+import io.gatling.http.client.ahc.uri.Uri
 import io.gatling.http.util.HttpHelper
 
-// FIXME Would it be more efficient to work with Array[Char] instead of String?
+import com.typesafe.scalalogging.StrictLogging
+
 object CssParser extends StrictLogging {
 
-  val InlineStyleImageUrls = """url\((.*)\)""".r
-  val StyleImportsUrls = """@import.* url\((.*)\)""".r
+  private val InlineStyleImageUrls = """url\((.*)\)""".r
+  private val StyleImportsUrls = """@import url\((.*)\)""".r
 
-  def extractUrls(string: CharSequence, regex: Regex): Iterator[String] = {
-    regex.findAllIn(string).matchData.map { m =>
+  def extractInlineStyleImageUrls(string: CharSequence): Iterator[String] =
+    extractUrls(string, InlineStyleImageUrls)
+
+  def extractStyleImportsUrls(string: CharSequence): Iterator[String] =
+    extractUrls(string, StyleImportsUrls)
+
+  private def extractUrls(string: CharSequence, regex: Regex): Iterator[String] =
+    regex.findAllIn(string).matchData.flatMap { m =>
       val raw = m.group(1)
       extractUrl(raw, 0, raw.length)
-    }.flatten
-  }
-
-  val SingleQuoteEscapeChar = Some('\'')
-  val DoubleQuoteEscapeChar = Some('"')
-  val AtImportChars = "@import".toCharArray
-  val UrlStartChars = "url(".toCharArray
-
-  def extractUrl(string: String, start: Int, end: Int): Option[String] = {
-
-    var protectChar: Option[Char] = None
-    var broken = false
-
-      @tailrec
-      def trimLeft(cur: Int): Int = (string.charAt(cur): @switch) match {
-        case ' ' | '\r' | '\n' => trimLeft(cur + 1)
-        case '\'' =>
-          protectChar match {
-            case None =>
-              protectChar = SingleQuoteEscapeChar
-              trimLeft(cur + 1)
-            case _ =>
-              broken = true
-              cur
-
-          }
-        case '"' =>
-          protectChar match {
-            case None =>
-              protectChar = DoubleQuoteEscapeChar
-              trimLeft(cur + 1)
-            case _ =>
-              broken = true
-              cur
-          }
-        case _ => cur
-      }
-
-      @tailrec
-      def trimRight(cur: Int): Int = (string.charAt(cur - 1): @switch) match {
-        case ' ' | '\r' | '\n' => trimRight(cur - 1)
-        case '\'' => protectChar match {
-          case `SingleQuoteEscapeChar` =>
-            trimRight(cur - 1)
-          case _ =>
-            broken = true
-            cur
-        }
-        case '"' => protectChar match {
-          case `DoubleQuoteEscapeChar` =>
-            trimRight(cur - 1)
-          case _ =>
-            broken = true
-            cur
-        }
-        case _ => cur
-      }
-
-    val trimmedStart = trimLeft(start)
-    val trimmedEnd = trimRight(end)
-
-    if (!broken) {
-      if (string.charAt(trimmedStart) == '#')
-        // anchors are not real urls
-        None
-      else
-        Some(string.substring(trimmedStart, trimmedEnd).ensureTrimmedCharsArray)
-    } else {
-      logger.info(s"css url $string broken")
-      None
     }
-  }
 
-  def extractResources(cssURI: URI, cssContent: String): List[EmbeddedResource] = {
+  private val SingleQuoteEscapeChar = Some('\'')
+  private val DoubleQuoteEscapeChar = Some('"')
+  private val AtImportChars = "@import".toCharArray
+  private val UrlStartChars = "url(".toCharArray
 
-    val resources = collection.mutable.ArrayBuffer.empty[EmbeddedResource]
+  def extractUrl(string: String, start: Int, end: Int): Option[String] =
+    if (string.isEmpty) {
+      None
+    } else {
+      var protectChar: Option[Char] = None
+      var broken = false
+
+      @tailrec
+      def trimLeft(cur: Int): Int =
+        if (cur == end)
+          cur
+        else
+          (string.charAt(cur): @switch) match {
+            case ' ' | '\r' | '\n' => trimLeft(cur + 1)
+            case '\'' =>
+              protectChar match {
+                case None =>
+                  protectChar = SingleQuoteEscapeChar
+                  trimLeft(cur + 1)
+                case _ =>
+                  broken = true
+                  cur
+
+              }
+            case '"' =>
+              protectChar match {
+                case None =>
+                  protectChar = DoubleQuoteEscapeChar
+                  trimLeft(cur + 1)
+                case _ =>
+                  broken = true
+                  cur
+              }
+            case _ => cur
+          }
+
+      @tailrec
+      def trimRight(cur: Int, leftLimit: Int): Int =
+        if (cur == leftLimit)
+          cur
+        else
+          (string.charAt(cur - 1): @switch) match {
+            case ' ' | '\r' | '\n' => trimRight(cur - 1, leftLimit)
+            case '\'' => protectChar match {
+              case `SingleQuoteEscapeChar` =>
+                trimRight(cur - 1, leftLimit)
+              case _ =>
+                broken = true
+                cur
+            }
+            case '"' => protectChar match {
+              case `DoubleQuoteEscapeChar` =>
+                trimRight(cur - 1, leftLimit)
+              case _ =>
+                broken = true
+                cur
+            }
+            case _ => cur
+          }
+
+      val trimmedStart = trimLeft(start)
+      val trimmedEnd = trimRight(end, trimmedStart)
+
+      if (!broken && trimmedStart != trimmedEnd) {
+        if (string.charAt(trimmedStart) == '#')
+          // anchors are not real urls
+          None
+        else
+          Some(string.substring(trimmedStart, trimmedEnd))
+      } else {
+        logger.info(s"css url $string broken")
+        None
+      }
+    }
+
+  def extractResources(cssURI: Uri, cssContent: String): List[ConcurrentResource] = {
+
+    val resources = collection.mutable.ArrayBuffer.empty[ConcurrentResource]
 
     var withinComment = false
     var withinImport = false
     var withinUrl = false
     var urlStart = 0
 
-      def charsMatch(i: Int, chars: Array[Char]): Boolean = {
+    def charsMatch(i: Int, chars: Array[Char]): Boolean = {
 
-          @tailrec
-          def charsMatchRec(j: Int): Boolean = {
-            if (j == chars.length)
-              true
-            else if (cssContent.charAt(i + j) != chars(j))
-              false
-            else
-              charsMatchRec(j + 1)
+      @tailrec
+      def charsMatchRec(j: Int): Boolean = {
+        if (j == chars.length)
+          true
+        else if (cssContent.charAt(i + j) != chars(j))
+          false
+        else
+          charsMatchRec(j + 1)
 
-          }
-
-        i < cssContent.length - chars.length && charsMatchRec(1)
       }
+
+      i < cssContent.length - chars.length && charsMatchRec(1)
+    }
 
     var i = 0
     while (i < cssContent.length) {
@@ -161,7 +173,7 @@ object CssParser extends StrictLogging {
         case ')' if !withinComment && withinUrl =>
           for {
             url <- extractUrl(cssContent, urlStart, i)
-            absoluteUri <- HttpHelper.resolveFromURISilently(cssURI, url)
+            absoluteUri <- HttpHelper.resolveFromUriSilently(cssURI, url)
           } {
             resources += CssResource(absoluteUri)
             withinUrl = false

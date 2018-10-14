@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,13 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.action
 
 import scala.concurrent.duration.{ Duration, DurationLong }
 
-import akka.actor.ActorRef
+import io.gatling.commons.util.Clock
 import io.gatling.core.session.{ Expression, Session }
-import io.gatling.core.util.TimeHelper.nowMillis
+import io.gatling.core.stats.StatsEngine
+import io.gatling.core.util.NameGen
+
+import akka.actor.ActorSystem
 
 /**
  * Pace provides a means to limit the frequency with which an action is run, by specifying a minimum wait time between iterations.
@@ -29,28 +33,34 @@ import io.gatling.core.util.TimeHelper.nowMillis
  * @param intervalExpr a function that decides how long to wait before the next iteration
  * @param counter the name of the counter used to keep track of the run state. Typically this would be random, but
  *                can be set explicitly if needed
- * @param next the next actor in the chain
  */
-class Pace(intervalExpr: Expression[Duration], counter: String, val next: ActorRef) extends Interruptable with Failable {
+class Pace(intervalExpr: Expression[Duration], counter: String, actorSystem: ActorSystem, val statsEngine: StatsEngine, val clock: Clock, val next: Action) extends ExitableAction with NameGen {
+
+  import actorSystem._
+
+  override val name: String = genName("pace")
+
   /**
-   * Pace keeps track of when it can next run using a counter in the session. If this counter does not exist, it will
-   * run immediately. On each run, it increments the counter by intervalExpr.
+   * Pace keeps track of when it can next run using a counter in the session.
+   * If this counter does not exist, it will run immediately.
+   * On each run, it increments the counter by intervalExpr.
    *
    * @param session the session of the virtual user
-   * @return Nothing
+   * @return nothing
    */
-  override def executeOrFail(session: Session) = {
+  override def execute(session: Session): Unit = recover(session) {
     intervalExpr(session) map { interval =>
-      val startTimeOpt = session(counter).asOption[Long]
-      val startTime = startTimeOpt.getOrElse(nowMillis)
-      val nextStartTime = startTime + interval.toMillis
-      val waitTime = startTime - nowMillis
-        def doNext = next ! session.set(counter, nextStartTime)
-      if (waitTime > 0) {
-        scheduler.scheduleOnce(waitTime milliseconds)(doNext)
-      } else {
-        if (startTimeOpt.isDefined) logger.info(s"Previous run overran by ${-waitTime}ms. Running immediately")
-        doNext
+      val now = clock.nowMillis
+      val intervalMillis = interval.toMillis
+      session(counter).asOption[Long] match {
+        case Some(timeLimit) if timeLimit > now =>
+          scheduler.scheduleOnce((timeLimit - now) milliseconds) {
+            // by-name parameter, so clock.nowMillis will be evaluated when scheduled task will run
+            next ! session.set(counter, clock.nowMillis + intervalMillis)
+          }
+
+        case _ =>
+          next ! session.set(counter, now + intervalMillis)
       }
     }
   }

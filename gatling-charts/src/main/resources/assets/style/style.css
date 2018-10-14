@@ -85,6 +85,11 @@ h1 span {
 	left: 0;
 }
 
+.head .logo {
+  display: block;
+  height: 85px;
+}
+
 .sim_desc {
 	float: right;
 	padding: 0;
@@ -95,7 +100,7 @@ h1 span {
 	background: #92918C;
 	width: 100%;
 	color: #FFF;
-	margin-top: 78px;
+	margin-top: 128px;
 }
 
 .foot a {
@@ -107,9 +112,9 @@ h1 span {
 
 .cadre {
 	width: 1050px;
-	padding: 38px 0 0 100px;
+	padding-left: 100px;
 	position: relative;
-	top: 70px;
+	top: 120px;
 }
 
 .onglet {
@@ -121,7 +126,7 @@ h1 span {
 	font-weight: bold;
 	position: absolute;
 	right: 0;
-	top: -9px;
+	top: -47px;
 	z-index: 8;
 	height: 28px;
 	box-shadow: 0 0 0 black, 4px -4px 3px #D1D1CE, -4px -4px 3px #D1D1CE;
@@ -372,12 +377,12 @@ h1 span {
 
 .demi {
 	width: 630px;
-	height: 330px;
+	height: 375px;
 }
 
 .geant {
 	width: 900px;
-	height: 354px;
+	height: 362px;
 }
 
 .extensible-geant {
@@ -386,7 +391,7 @@ h1 span {
 
 .polar {
 	width: 250px;
-	height: 330px;
+	height: 375px;
 	position: absolute;
 	top: 0px;
 	right: -17px;
@@ -454,6 +459,14 @@ h1 span {
 	background: #CF6900 url('stat-fond.png') repeat-x;
 }
 
+#container_assertions {
+	background: #FF9916;
+	padding: 5px 5px 0px 5px;
+	border-bottom-left-radius: 8px;
+	border-bottom-right-radius: 8px;
+	background: #CF6900 url('stat-fond.png') repeat-x;
+}
+
 .statistics-in {
 	margin: 0;
 	border-spacing: 4px;
@@ -484,7 +497,7 @@ h1 span {
 
 .sortable span {
 	background: url('sortable.png') no-repeat right 3px;
-	padding-right: 15px;
+	padding-right: 10px;
 }
 
 .sorted-up span {

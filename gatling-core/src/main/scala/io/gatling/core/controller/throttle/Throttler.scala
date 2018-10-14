@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,85 +13,54 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.controller.throttle
 
-import java.lang.System.nanoTime
+import io.gatling.core.scenario.SimulationParams
 
-import scala.concurrent.duration.DurationInt
+import akka.actor.{ Props, ActorSystem, ActorRef }
 
-import io.gatling.core.akka.AkkaDefaults
-import io.gatling.core.config.Protocol
-import io.gatling.core.util.TimeHelper.secondsSinceReference
+case class Throttles(global: Option[Throttle], perScenario: Map[String, Throttle]) {
 
-case class ThrottlingProtocol(limit: Long => Int) extends Protocol
+  def limitReached(scenario: String): Boolean = {
+    global.map(_.limitReached) match {
+      case Some(true) => true
+      case _          => perScenario.collectFirst { case (`scenario`, throttle) => throttle.limitReached }.getOrElse(false)
+    }
+  }
 
-class ThisSecondThrottler(val limit: Int, var count: Int = 0) {
-
-  def increment(): Unit = count += 1
-  def limitReached: Boolean = count >= limit
+  def increment(scenario: String): Unit = {
+    global.foreach(_.increment())
+    perScenario.get(scenario).foreach(_.increment())
+  }
 }
 
-class Throttler(globalProfile: Option[ThrottlingProtocol], scenarioProfiles: Map[String, ThrottlingProtocol]) extends AkkaDefaults {
+class Throttle(val limit: Int, var count: Int = 0) {
 
-  val buffer = collection.mutable.Queue.empty[(String, () => Unit)]
+  def increment(): Unit = count += 1
 
-  var thisTickStartNanoRef: Long = _
-  var thisTickGlobalThrottler: Option[ThisSecondThrottler] = _
-  var thisTickPerScenarioThrottlers: Map[String, ThisSecondThrottler] = _
-  var requestPeriod: Double = _
-  var thisTickRequestCount: Int = _
+  def limitReached: Boolean = count >= limit
 
-  newSecond()
+  override def toString = s"Throttle(limit=$limit, count=$count)"
+}
 
-  private def newSecond() {
-    thisTickStartNanoRef = nanoTime
-    val thisTickStartSeconds = secondsSinceReference
-    thisTickGlobalThrottler = globalProfile.map(p => new ThisSecondThrottler(p.limit(thisTickStartSeconds)))
-    thisTickPerScenarioThrottlers = Map.empty ++ scenarioProfiles.mapValues(p => new ThisSecondThrottler(p.limit(thisTickStartSeconds)))
-    val globalLimit = thisTickGlobalThrottler.map(_.limit)
-    val perScenarioLimits = thisTickPerScenarioThrottlers.map(_._2.limit)
-    val maxNumberOfRequests =
-      if (perScenarioLimits.isEmpty)
-        globalLimit.get
-      else
-        math.max(perScenarioLimits.max, globalLimit.getOrElse(0))
+object Throttler {
 
-    requestPeriod = 1000.0 / maxNumberOfRequests
-    thisTickRequestCount = 0
+  val ThrottlerActorName = "gatling-throttler"
+  val ThrottlerControllerActorName = "gatling-throttler-controller"
+
+  def apply(system: ActorSystem, simulationParams: SimulationParams): Throttler = {
+
+    val throttler = system.actorOf(Props(new ThrottlerActor), ThrottlerActorName)
+    val throttlerController = system.actorOf(Props(new ThrottlerController(throttler, simulationParams.throttlings)), ThrottlerControllerActorName)
+    new Throttler(throttlerController, throttler)
   }
+}
 
-  private def throttle(scenarioName: String, request: () => Unit, shiftInMillis: Int) = {
-    val scenarioThrottler = thisTickPerScenarioThrottlers.get(scenarioName)
+class Throttler(throttlerController: ActorRef, throttlerActor: ActorRef) {
 
-    val sending = !thisTickGlobalThrottler.exists(_.limitReached) && !scenarioThrottler.exists(_.limitReached)
-    if (sending) {
-      thisTickGlobalThrottler.foreach(_.increment)
-      scenarioThrottler.foreach(_.increment)
-      val delay = (requestPeriod * thisTickRequestCount).toInt - shiftInMillis
-      thisTickRequestCount += 1
+  def start(): Unit = throttlerController ! ThrottlerControllerCommand.Start
 
-      if (delay > 0)
-        scheduler.scheduleOnce(delay milliseconds) {
-          request()
-        }
-      else
-        request()
-    }
-
-    sending
-  }
-
-  def millisSinceTickStart: Int = ((nanoTime - thisTickStartNanoRef) / 1000000).toInt
-
-  def send(scenarioName: String, request: () => Unit) {
-    if (!throttle(scenarioName, request, millisSinceTickStart))
-      buffer += scenarioName -> request
-  }
-
-  def flushBuffer() {
-    newSecond()
-    // FIXME ugly, side effecting, can do better?
-    // + no need to keep on testing when global limit is reached
-    buffer.dequeueAll { case (scenarioName, request) => throttle(scenarioName, request, 0) }
-  }
+  def throttle(scenarioName: String, action: () => Unit): Unit =
+    throttlerActor ! ThrottledRequest(scenarioName, action)
 }

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,33 +13,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.check
 
-import io.gatling.core.validation.{ FailureWrapper, SuccessWrapper, Validation, NoneSuccess }
+import io.gatling.commons.validation._
 
 object Validator {
-  val FoundNothingFailure = "found nothing".failure
+  val FoundNothingFailure: Failure = "found nothing".failure
 }
 
 trait Validator[A] {
   def name: String
-  def apply(actual: Option[A]): Validation[Option[A]]
+  def apply(actual: Option[A], displayActualValue: Boolean): Validation[Option[A]]
 }
 
-abstract class Matcher[A, E] extends Validator[A] {
-  def expected: E
-  def doMatch(actual: Option[A]): Validation[Option[A]]
-  def apply(actual: Option[A]): Validation[Option[A]] =
-    for {
-      matchResult <- doMatch(actual).mapError(message => s"but actually $message")
-    } yield matchResult
+abstract class Matcher[A] extends Validator[A] {
+  protected def doMatch(actual: Option[A]): Validation[Option[A]]
+  def apply(actual: Option[A], displayActualValue: Boolean): Validation[Option[A]] =
+    if (displayActualValue) {
+      doMatch(actual).mapError(message => s"but actually $message")
+    } else {
+      doMatch(actual)
+    }
 }
 
-class IsMatcher[E](val expected: E) extends Matcher[E, E] {
+class IsMatcher[A](expected: A) extends Matcher[A] {
 
   def name = s"is($expected)"
 
-  def doMatch(actual: Option[E]): Validation[Option[E]] = actual match {
+  protected def doMatch(actual: Option[A]): Validation[Option[A]] = actual match {
     case Some(actualValue) =>
       if (actualValue == expected)
         actual.success
@@ -49,11 +51,25 @@ class IsMatcher[E](val expected: E) extends Matcher[E, E] {
   }
 }
 
-class NotMatcher[E](val expected: E) extends Matcher[E, E] {
+class IsNullMatcher[A] extends Matcher[A] {
+
+  def name = "isNull"
+
+  protected def doMatch(actual: Option[A]): Validation[Option[A]] = actual match {
+    case Some(actualValue) =>
+      if (actualValue == null)
+        actual.success
+      else
+        s"found $actualValue".failure
+    case None => Validator.FoundNothingFailure
+  }
+}
+
+class NotMatcher[A](expected: A) extends Matcher[A] {
 
   def name = s"not($expected)"
 
-  def doMatch(actual: Option[E]): Validation[Option[E]] = actual match {
+  protected def doMatch(actual: Option[A]): Validation[Option[A]] = actual match {
     case Some(actualValue) =>
       if (actualValue != expected)
         actual.success
@@ -63,25 +79,39 @@ class NotMatcher[E](val expected: E) extends Matcher[E, E] {
   }
 }
 
-class InMatcher[E](val expected: Seq[E]) extends Matcher[E, Seq[E]] {
+class NotNullMatcher[A] extends Matcher[A] {
 
-  def name = expected.mkString("in(", ",", ")")
+  def name = "notNull"
 
-  def doMatch(actual: Option[E]): Validation[Option[E]] = actual match {
+  protected def doMatch(actual: Option[A]): Validation[Option[A]] = actual match {
+    case Some(actualValue) =>
+      if (actualValue != null)
+        actual.success
+      else
+        "found null".failure
+    case None => NoneSuccess
+  }
+}
+
+class InMatcher[A](expected: Seq[A]) extends Matcher[A] {
+
+  def name: String = expected.mkString("in(", ",", ")")
+
+  protected def doMatch(actual: Option[A]): Validation[Option[A]] = actual match {
     case Some(actualValue) =>
       if (expected.contains(actualValue))
         actual.success
       else
         s"found $actualValue".failure
-    case None => Validator.FoundNothingFailure
+    case _ => Validator.FoundNothingFailure
   }
 }
 
-class CompareMatcher[E](val comparisonName: String, message: String, compare: (E, E) => Boolean, val expected: E) extends Matcher[E, E] {
+class CompareMatcher[A](val comparisonName: String, message: String, compare: (A, A) => Boolean, expected: A) extends Matcher[A] {
 
   def name = s"$comparisonName($expected)"
 
-  def doMatch(actual: Option[E]): Validation[Option[E]] = actual match {
+  protected def doMatch(actual: Option[A]): Validation[Option[A]] = actual match {
     case Some(actualValue) =>
       if (compare(actualValue, expected))
         actual.success
@@ -94,21 +124,21 @@ class CompareMatcher[E](val comparisonName: String, message: String, compare: (E
 
 class ExistsValidator[A] extends Validator[A] {
   val name = "exists"
-  def apply(actual: Option[A]): Validation[Option[A]] = actual match {
-    case Some(actualValue) => actual.success
-    case None              => Validator.FoundNothingFailure
+  def apply(actual: Option[A], displayActualValue: Boolean): Validation[Option[A]] = actual match {
+    case None => Validator.FoundNothingFailure
+    case _    => actual.success
   }
 }
 
 class NotExistsValidator[A] extends Validator[A] {
   val name = "notExists"
-  def apply(actual: Option[A]): Validation[Option[A]] = actual match {
+  def apply(actual: Option[A], displayActualValue: Boolean): Validation[Option[A]] = actual match {
     case Some(actualValue) => s"unexpectedly found $actualValue".failure
-    case None              => NoneSuccess
+    case _                 => NoneSuccess
   }
 }
 
 class NoopValidator[A] extends Validator[A] {
   val name = "noop"
-  def apply(actual: Option[A]): Validation[Option[A]] = actual.success
+  def apply(actual: Option[A], displayActualValue: Boolean): Validation[Option[A]] = actual.success
 }

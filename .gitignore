@@ -22,10 +22,14 @@ temp
 dist
 test-output
 build.log
+.jvmopts
 
 # misc
 .DS_Store
 *~
+
+#Python
+*.pyc
 
 # project files to ignore
 /gatling-bundle/src/main/assembly/assembly-structure/results/*
@@ -37,8 +41,10 @@ highcharts.js
 highstock.js
 theme.js
 
-results/
-
-#Generated config files
+#Generated and copied config files
 gatling.conf
 recorder.conf
+gatling-akka.conf
+logback.xml
+gatling-compiler/src/main/resources/gatling-defaults.conf
+gatling-version.properties

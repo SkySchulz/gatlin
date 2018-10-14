@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,31 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.ui
 
-import scala.reflect.io.Path.string2path
-import scala.swing.Dialog
-import scala.swing.Swing.onEDT
-
-import io.gatling.recorder.RecorderMode
+import io.gatling.recorder.config.{ RecorderMode, RecorderConfiguration }
 import io.gatling.recorder.controller.RecorderController
-import io.gatling.recorder.ui.swing.component.DialogFileSelector
-import io.gatling.recorder.ui.swing.frame.{ ConfigurationFrame, RunningFrame }
+import io.gatling.recorder.ui.headless.HeadlessFrontEnd
+import io.gatling.recorder.ui.swing.SwingFrontEnd
 
-object RecorderFrontend {
+private[recorder] object RecorderFrontEnd {
 
-  // Currently hardwired to the Swing frontend
-  // Will select the desired frontend when more are implemented
-  def newFrontend(controller: RecorderController): RecorderFrontend =
-    new SwingFrontend(controller)
+  def newFrontend(controller: RecorderController)(implicit configuration: RecorderConfiguration): RecorderFrontEnd =
+    if (configuration.core.headless) new HeadlessFrontEnd(controller)
+    else new SwingFrontEnd(controller)
 }
-sealed abstract class RecorderFrontend(controller: RecorderController) {
+private[recorder] abstract class RecorderFrontEnd(controller: RecorderController) {
 
-  /******************************/
+/******************************/
   /**  Controller => Frontend  **/
-  /******************************/
+/******************************/
 
-  def selectedMode: RecorderMode
+  def selectedRecorderMode: RecorderMode
 
   def harFilePath: String
 
@@ -57,11 +53,11 @@ sealed abstract class RecorderFrontend(controller: RecorderController) {
 
   def recordingStopped(): Unit
 
-  def receiveEventInfo(eventInfo: EventInfo): Unit
+  def receiveEvent(event: FrontEndEvent): Unit
 
-  /******************************/
+/******************************/
   /**  Frontend => Controller  **/
-  /******************************/
+/******************************/
 
   def addTag(tag: String): Unit = controller.addTag(tag)
 
@@ -70,87 +66,4 @@ sealed abstract class RecorderFrontend(controller: RecorderController) {
   def stopRecording(save: Boolean): Unit = controller.stopRecording(save)
 
   def clearRecorderState(): Unit = controller.clearRecorderState()
-}
-
-private class SwingFrontend(controller: RecorderController) extends RecorderFrontend(controller) {
-
-  private lazy val runningFrame = new RunningFrame(this)
-  private lazy val configurationFrame = new ConfigurationFrame(this)
-
-  def selectedMode = configurationFrame.selectedMode
-
-  def harFilePath = configurationFrame.harFilePath
-
-  def handleMissingHarFile(harFilePath: String): Unit = {
-    if (harFilePath.isEmpty) {
-      Dialog.showMessage(
-        title = "Error",
-        message = "You haven't selected an HAR file.",
-        messageType = Dialog.Message.Error)
-    } else {
-      val possibleMatches = lookupFiles(harFilePath)
-      if (possibleMatches.isEmpty) {
-        Dialog.showMessage(
-          title = "No matches found",
-          message = """	|No files that could closely match the
-									|selected file's name have been found.
-									|Please check the file's path is correct.""".stripMargin,
-          messageType = Dialog.Message.Warning)
-      } else {
-        val selector = new DialogFileSelector(configurationFrame, possibleMatches)
-        selector.open()
-        val parentPath = harFilePath.parent.path
-        configurationFrame.updateHarFilePath(selector.selectedFile.map(file => (parentPath / file).toString()))
-      }
-    }
-  }
-
-  def handleHarExportSuccess(): Unit = {
-    Dialog.showMessage(
-      title = "Conversion complete",
-      message = "Successfully converted HAR file to a Gatling simulation",
-      messageType = Dialog.Message.Info)
-  }
-
-  def handleHarExportFailure(message: String): Unit = {
-    Dialog.showMessage(
-      title = "Error",
-      message = s"""	|Export to HAR File unsuccessful: $message.
-							|See logs for more information""".stripMargin,
-      messageType = Dialog.Message.Error)
-  }
-
-  def handleFilterValidationFailures(failures: Seq[String]): Unit = {
-    Dialog.showMessage(
-      title = "Error",
-      message = failures.mkString("\n"),
-      messageType = Dialog.Message.Error)
-  }
-
-  def askSimulationOverwrite = {
-    Dialog.showConfirmation(
-      title = "Warning",
-      message = "You are about to overwrite an existing simulation.",
-      optionType = Dialog.Options.OkCancel,
-      messageType = Dialog.Message.Warning) == Dialog.Result.Ok
-  }
-
-  def init(): Unit = {
-    configurationFrame.visible = true
-    runningFrame.visible = false
-  }
-
-  def recordingStarted(): Unit = {
-    runningFrame.visible = true
-    configurationFrame.visible = false
-  }
-
-  def recordingStopped(): Unit = runningFrame.clearState()
-
-  def receiveEventInfo(eventInfo: EventInfo): Unit = onEDT(runningFrame.receiveEventInfo(eventInfo))
-
-  private def lookupFiles(path: String) = {
-    val parent = path.parent
-    parent.files.filter(_.path.startsWith(path)).map(_.name).toList
-  }
 }

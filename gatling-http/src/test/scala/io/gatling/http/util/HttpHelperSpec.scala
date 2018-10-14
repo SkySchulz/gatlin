@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,35 +13,63 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.util
 
-import org.junit.runner.RunWith
-import org.specs2.mutable.Specification
-import org.specs2.runner.JUnitRunner
+import java.nio.charset.StandardCharsets.UTF_8
 
-@RunWith(classOf[JUnitRunner])
-class HttpHelperSpec extends Specification {
+import io.gatling.BaseSpec
 
-  "parseFormBody" should {
+import io.netty.handler.codec.http.HttpResponseStatus
 
-    "support unique param" in {
-      HttpHelper.parseFormBody("foo=bar") must beEqualTo(List("foo" -> "bar"))
-    }
+class HttpHelperSpec extends BaseSpec {
 
-    "support multiple params" in {
-      HttpHelper.parseFormBody("foo=bar&baz=qux") must beEqualTo(List("foo" -> "bar", "baz" -> "qux"))
-    }
+  "parseFormBody" should "support unique param" in {
+    HttpHelper.parseFormBody("foo=bar") shouldBe List("foo" -> "bar")
+  }
 
-    "support empty value param" in {
-      HttpHelper.parseFormBody("foo=&baz=qux") must beEqualTo(List("foo" -> "", "baz" -> "qux"))
-    }
+  it should "support multiple params" in {
+    HttpHelper.parseFormBody("foo=bar&baz=qux") shouldBe List("foo" -> "bar", "baz" -> "qux")
+  }
 
-    "recognize 301 status code as permanent redirect" in {
-      HttpHelper.isPermanentRedirect(301) must beTrue
-    }
+  it should "support empty value param" in {
+    HttpHelper.parseFormBody("foo=&baz=qux") shouldBe List("foo" -> "", "baz" -> "qux")
+  }
 
-    "non 301 status code should be recognized as permanent redirect" in {
-      HttpHelper.isPermanentRedirect(303) must beFalse
-    }
+  it should "recognize 301 status code as permanent redirect" in {
+    HttpHelper.isPermanentRedirect(HttpResponseStatus.MOVED_PERMANENTLY) shouldBe true
+  }
+
+  it should "non 301 status code should be recognized as permanent redirect" in {
+    HttpHelper.isPermanentRedirect(HttpResponseStatus.SEE_OTHER) shouldBe false
+  }
+
+  "extractCharsetFromContentType" should "extract charset when it exists in latest position" in {
+    HttpHelper.extractCharsetFromContentType("text/plain; charset=UTF-8") shouldBe Some(UTF_8)
+  }
+
+  it should "extract charset when it exists in latest position, whatever the case" in {
+    HttpHelper.extractCharsetFromContentType("text/plain; charset=utf-8") shouldBe Some(UTF_8)
+  }
+
+  it should "extract charset when it exists in middle position" in {
+    HttpHelper.extractCharsetFromContentType("text/plain; charset=UTF-8; foo=bar") shouldBe Some(UTF_8)
+  }
+
+  it should "extract charset when it exists with leading and trailing spaces" in {
+    HttpHelper.extractCharsetFromContentType("text/plain; charset= UTF-8 ; foo=bar") shouldBe Some(UTF_8)
+  }
+
+  it should "extract charset when it's wrapped in double quotes" in {
+    HttpHelper.extractCharsetFromContentType("""text/plain;  charset="UTF-8" ; foo=bar""") shouldBe Some(UTF_8)
+  }
+
+  it should "not crash when double quotes are unbalanced" in {
+    HttpHelper.extractCharsetFromContentType("""text/plain;  charset="UTF-8 ; foo=bar""") shouldBe Some(UTF_8)
+    HttpHelper.extractCharsetFromContentType("""text/plain;  charset=UTF-8" ; foo=bar""") shouldBe Some(UTF_8)
+  }
+
+  it should "not crash when charset is unknown" in {
+    HttpHelper.extractCharsetFromContentType("text/plain; charset=Foo") shouldBe None
   }
 }

@@ -16,7 +16,7 @@ If you can't find a solution here, consider joining our `Google Group <https://g
 Highcharts and Highstock are javascript libraries whose license is not open-source friendly.
 We pay license fees so that we can package and distribute them and let people use them **for free**, but this module can't be open sourced.
 
-We really want to keep as much code as possible under Apache 2, so we move the reports generation library implementation into a separate project `<https://github.com/excilys/gatling-highcharts>`_.
+We really want to keep as much code as possible under Apache 2, so we move the reports generation library implementation into a separate project `<https://github.com/gatling/gatling-highcharts>`_.
 
 If anyone can come with an Apache 2 licensed solution that's as sexy and plug-and-play as Highcharts and Highstock, we'd gladly make it the default implementation and integrate it into the main project!
 
@@ -24,7 +24,7 @@ See :ref:`License section <license>`
 
 .. _faq-gatling-highcharts-split2:
 
-* **I built from sources and got a java.lang.NoClassDefFoundError: com/excilys/ebi/gatling/charts/component/impl/ComponentLibraryImpl**
+* **I built from sources and got a java.lang.NoClassDefFoundError: io/gatling/charts/component/impl/ComponentLibraryImpl**
 
 See up here, the Highcharts based charts implementation is hosted in a separate project.
 You have to build it too.
@@ -40,14 +40,14 @@ This parameter can be increased with the ``-Xss`` JVM parameter.
 Another solution is of course to split into smaller chains.
 
 Since 2M3, Gatling forks a new process for running so compiler, so that one can tune JVM differently for compiler and running.
-The compiler JVM can be tuned with a parameter named ``gatling.core.zinc`` in `gatling.conf <https://github.com/excilys/gatling/blob/2.0.0-M3a/gatling-core/src/main/resources/gatling-defaults.conf#L44>`_.
+The compiler JVM can be tuned with a parameter named ``gatling.core.zinc`` in `gatling.conf <https://github.com/gatling/gatling/blob/master/gatling-core/src/main/resources/gatling-defaults.conf#49>`_.
 
 .. _faq-warmup:
 
 * **I get a "Connection timed out: no further information to http://gatling-tool.org", what happened?**
 
 Since 1.2.0, Gatling has an option for sending a request in order to warm up the engine and have more precise statistics during the run.
-This option is enabled by default and http://gatling-tool.org is the default url.
+This option is enabled by default and https://gatling.io is the default url.
 
 If Gatling can't reach out this url either because you don't have a connection, or because it requires a proxy configuration, you'll get this stacktrace.
 
@@ -58,7 +58,7 @@ Either disable this feature, or change the target url. See documentation :ref:`h
 * **The compiler complains my Simulation class is too big**
 
 Scala classes have the same limitations as Java ones.
-For example, the amount of code inside a method can't exceed 64ko.
+For example, the amount of code inside a method can't exceed 64Kb.
 
 If you are in this case (for example, you recorded a big maven installation), you should consider refactoring things a little bit.
 
@@ -101,84 +101,15 @@ It was possible in old versions, but it caused tons of problems, so we removed t
 
 However, just like scheduling, that's something very easy to achieve outside Gatling. For example, one can configure `multiple executions <http://maven.apache.org/guides/mini/guide-default-execution-ids.html>`_ of the Gatling maven plugin, or multiple Jenkins jobs.
 
-.. _faq-simulation-log:
+.. _faq-method_too_large:
 
-* **What's the meaning of the 4 longs in simulation.log file?**
-
-Those are currently:
-
-  1. first byte sent timestamp
-  2. last byte sent timestamp
-  3. first byte received timestamp
-  4. last byte received timestamp
-
-A timestamp is of course the number of milliseconds since epoch.
-
-  * response time (in ms) = 4 - 1
-  * latency (in ms) = 3 - 2
-
-Beware that the format of this file is an implementation details of the ``FileDataWriter``/``FileDataReader`` combo, so it might be subject to changes.
-
-.. _faq-elb:
-
-* **Using Amazon Elastic Load Balancing?**
-
-See `this page <http://aws.amazon.com/articles/1636185810492479>`_.
-
-.. note::
-  DNS Resolution
-  If clients do not re-resolve the DNS at least once per minute, then the new resources Elastic Load Balancing adds to DNS will not be used by clients. This can mean that clients continue to overwhelm a small portion of the allocated Elastic Load Balancing resources, while overall Elastic Load Balancing is not being heavily utilized. This is not a problem that can occur in real-world scenarios, but it is a likely problem for load testing tools that do not offer the control needed to ensure that clients are re-resolving DNS frequently.
-
-Basically, Gatling/JVM's DNS cache has to tuned. A solution is to add ``-Dsun.net.inetaddr.ttl=0`` to the command line.
-
-.. _faq-bad_record_mac:
-
-* **I get some "bad_record_mac" Exceptions over SSL**
-
-This seems to be a Hostpot JDK7 bug and affects all Java programs, for example: https://github.com/rubygems/rubygems.org/issues/615.
-
-OpenJDK 7 and Hostpot JDK8 seem to be fine.
-
-.. _faq-download:
-
-* **I don't have permissions to download binaries on Google Drive**
-
-The files are definitively public.
-
-There's 99,99% chances that you're logged with a Google enterprise account and Google permissions get messed up.
-
-Just log off and you'll be able to download just fine.
-
-https://github.com/excilys/gatling/wiki/FAQ#method-too-large
-
-I have a **HUGE** simulation and I get a "Method too large" compile error.
+* **I have a HUGE simulation and I get a "Method too large" compile error**
 
 In Java and Scala, there's a method size limit. Here, the method is your Simulation constructor.
 
-Typically, you have to move your chains out of your Simulation class, for example into objects::
+Typically, you have to move your chains out of your Simulation class, for example into objects:
 
-  object ChainLibrary1 {
-    val chain1 = ???
-    val chain2 = ???
-    ...
-    val chain100 = ???
-  }
-
-  object ChainLibrary2 {
-    val chain101 = ???
-    val chain102 = ???
-    ...
-    val chain150 = ???
-  }
-
-  class MyVeryBigSimulation {
-
-    import ChainLibrary1._
-    import ChainLibrary2._
-
-    val scn = scenario("Name").exec(chain1, ..., chain150)
-    ...
-  }
+.. includecode:: code/FaqSample.scala#chains
 
 .. _dandling-connections:
 
@@ -187,3 +118,4 @@ Typically, you have to move your chains out of your Simulation class, for exampl
 This issue has been reported once, and preferring IPv4 fixed it::
 
   -Djava.net.preferIPv4Stack=true
+

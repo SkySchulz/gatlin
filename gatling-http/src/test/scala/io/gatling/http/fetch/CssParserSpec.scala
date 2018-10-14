@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,43 +13,88 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.fetch
 
-import java.net.URI
+import io.gatling.BaseSpec
+import io.gatling.http.client.ahc.uri.Uri
 
-import org.junit.runner.RunWith
-import org.specs2.mutable.Specification
-import org.specs2.runner.JUnitRunner
+class CssParserSpec extends BaseSpec {
 
-@RunWith(classOf[JUnitRunner])
-class CssParserSpec extends Specification {
+  private val rootURI = Uri.create("http://akka.io/")
 
-  val rootURI = new URI("http://akka.io/")
+  private def rulesUri(css: String) = CssParser.extractResources(rootURI, css).map(_.url)
 
-  "parsing CSS" should {
+  "parsing CSS" should "handle an empty CSS" in {
+    rulesUri("") shouldBe empty
+  }
 
-      def rulesUri(css: String) = CssParser.extractResources(rootURI, css).map(_.url)
+  it should "fetch imports" in {
+    val css = """
+        @import url("import1.css");
+        body{background-image: url('backgrounds/blizzard.png');}
+        @import url("import2.css");"""
 
-    "handle an empty CSS" in {
-      rulesUri("") must beEqualTo(Nil)
-    }
+    rulesUri(css) shouldBe Seq("http://akka.io/import1.css", "http://akka.io/import2.css")
+  }
 
-    "fetch imports" in {
-      val css = """
-				@import url("import1.css");
-				body{background-image: url('backgrounds/blizzard.png');}
-				@import url("import2.css");
-				"""
-      rulesUri(css) must beEqualTo(Seq("http://akka.io/import1.css", "http://akka.io/import2.css"))
-    }
+  it should "ignore commented imports with a simple CSS" in {
+    val css = """
+        /*@import url("import1.css");*/
+        body{background-image: url('backgrounds/blizzard.png');}
+        @import url("import2.css");"""
 
-    "ignore commented imports with a simple CSS" in {
-      val css = """
-				/*@import url("import1.css");*/
-				body{background-image: url('backgrounds/blizzard.png');}
-				@import url("import2.css");
-				"""
-      rulesUri(css) must beEqualTo(Seq("http://akka.io/import2.css"))
-    }
+    rulesUri(css) shouldBe Seq("http://akka.io/import2.css")
+  }
+
+  def extractUrl(s: String): Option[String] =
+    CssParser.extractUrl(s, 0, s.length)
+
+  "extractUrl" should "handle unquoted url" in {
+    extractUrl("import2.css") shouldBe Some("import2.css")
+  }
+
+  it should "handle unquoted url surrounded with whitespaces" in {
+    extractUrl(" import2.css ") shouldBe Some("import2.css")
+  }
+
+  it should "handle double quoted url" in {
+    extractUrl("\"import2.css\"") shouldBe Some("import2.css")
+  }
+
+  it should "handle double quoted url surrounded with whitespaces" in {
+    extractUrl("\" import2.css \"") shouldBe Some("import2.css")
+  }
+
+  it should "handle single quoted url" in {
+    extractUrl("'import2.css'") shouldBe Some("import2.css")
+  }
+
+  it should "handle single quoted url surrounded with whitespaces" in {
+    extractUrl("' import2.css '") shouldBe Some("import2.css")
+  }
+
+  it should "handle empty unquoted url" in {
+    extractUrl("") shouldBe None
+  }
+
+  it should "handle empty unquoted url surrounded with whitespaces" in {
+    extractUrl("  ") shouldBe None
+  }
+
+  it should "handle empty double quoted url" in {
+    extractUrl("\"\"") shouldBe None
+  }
+
+  it should "handle empty double quoted url surrounded with whitespaces" in {
+    extractUrl("\"  \"") shouldBe None
+  }
+
+  it should "handle empty single quoted url" in {
+    extractUrl("''") shouldBe None
+  }
+
+  it should "handle empty single quoted url surrounded with whitespaces" in {
+    extractUrl("'  '") shouldBe None
   }
 }

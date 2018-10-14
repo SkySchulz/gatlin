@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,22 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.scenario
 
 import io.gatling.http.HeaderNames
 
-object ProtocolDefinition {
+import io.netty.handler.codec.http.{ DefaultHttpHeaders, HttpHeaders }
 
-  val baseHeaders = Map(
-    HeaderNames.Accept -> "acceptHeader",
-    HeaderNames.AcceptCharset -> "acceptCharsetHeader",
-    HeaderNames.AcceptEncoding -> "acceptEncodingHeader",
-    HeaderNames.AcceptLanguage -> "acceptLanguageHeader",
-    HeaderNames.Authorization -> "authorizationHeader",
-    HeaderNames.Connection -> "connection",
-    HeaderNames.ContentType -> "contentTypeHeader",
-    HeaderNames.DNT -> "doNotTrackHeader",
-    HeaderNames.UserAgent -> "userAgentHeader")
+private[scenario] object ProtocolDefinition {
+
+  // use HttpHeaders because keys are case insensitive
+  val BaseHeadersAndProtocolMethods: HttpHeaders = new DefaultHttpHeaders(false)
+    .add(HeaderNames.Accept, "acceptHeader")
+    .add(HeaderNames.AcceptCharset, "acceptCharsetHeader")
+    .add(HeaderNames.AcceptEncoding, "acceptEncodingHeader")
+    .add(HeaderNames.AcceptLanguage, "acceptLanguageHeader")
+    .add(HeaderNames.Authorization, "authorizationHeader")
+    .add(HeaderNames.Connection, "connectionHeader")
+    .add(HeaderNames.ContentType, "contentTypeHeader")
+    .add(HeaderNames.DNT, "doNotTrackHeader")
+    .add(HeaderNames.UserAgent, "userAgentHeader")
+    .add(HeaderNames.UpgradeInsecureRequests, "upgradeInsecureRequestsHeader")
 }
 
-case class ProtocolDefinition(baseUrl: String, headers: Map[String, String])
+private[scenario] case class ProtocolDefinition(baseUrl: String, headers: HttpHeaders)

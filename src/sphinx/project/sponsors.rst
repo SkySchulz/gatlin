@@ -5,30 +5,17 @@ Sponsors
 eBusiness Information
 =====================
 
-.. image:: img/ebi_logo.png
-	:alt: eBusiness Information
+.. image:: img/logo-takima-1-nom-bas.png
+    :alt: Takima
 
-Gatling is an open source project supported by `eBusiness Information <http://www.ebusinessinformation.fr>`_, an `Excilys Group <http://www.excilys.com>`_ company.
-
-Yourkit
-=======
-
-.. image:: img/yourkit_logo.png
-	:alt: Yourkit
-
-YourKit is kindly supporting open source projects with its full-featured Java Profiler.
-YourKit, LLC is the creator of innovative and intelligent tools for profiling Java and .NET applications. Take a look at YourKit's leading software products:
-`YourKit Java Profiler <http://www.yourkit.com/java/profiler/index.jsp>`_ and `YourKit .NET Profiler <http://www.yourkit.com/.net/profiler/index.jsp>`_.
-
-Yourkit has been and is still a great help for checking and fixing memory and concurrency issues while developping Gatling.
+Gatling was originally incubated at `Takima (formerly eBusiness Information) <https://www.takima.fr>`_.
 
 Highsoft AS
 ===========
 
-.. image :: img/highsoft_logo.png
-	:alt: Highsoft AS
+.. image:: img/highsoft_logo.png
+    :alt: Highsoft AS
 
 `Highsoft AS <http://www.highsoft.com>`_ is the company behind `Highcharts <http://www.highcharts.com/products/highcharts>`_ and `Highstock <http://www.highcharts.com/products/highstock>`_, two astonishing JavaScript charting libraries.
 
-Gatling's reports would not be as nice as they are if it wasn't for Highsoft libraries. They add incontestable value to these reports through their look and feel and their abilitiy to display nicely thousands of points.
-
+Gatling's reports would not be as nice as they are if it wasn't for Highsoft libraries. They add incontestable value to these reports through their look and feel and their ability to display nicely thousands of points.

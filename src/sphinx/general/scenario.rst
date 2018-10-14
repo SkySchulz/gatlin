@@ -6,13 +6,14 @@
 Scenario
 ########
 
-Reference of the different components available to write scenarios with Gatling.
+This is the reference of the different components available to write scenarios with Gatling.
+
+Bootstrapping
+=============
 
 ``scenario`` is the way to bootstrap a new scenario.
 
-::
-
-  scenario("My Scenario")
+.. includecode:: code/ScenarioSample.scala#bootstrapping
 
 You can use any character in the name of the scenario **except** tabulations: **\t**.
 
@@ -24,57 +25,50 @@ Structure elements
 Exec
 ----
 
-``exec`` method is used to execute an action.
+The ``exec`` method is used to execute an action.
 Actions are usually requests (HTTP, LDAP, POP, IMAP, etc) that will be sent during the simulation.
-Any action that will be executed will be called with exec.
+Any action that will be executed will be called with ``exec``.
 
-For example, one using Gatling HTTP module would write the following line::
+For example, when using the Gatling HTTP module you would write the following line:
 
-  scenario("My Scenario")
-    .exec( http("Get Homepage").get("http://github.com/excilys/gatling") )
+.. includecode:: code/ScenarioSample.scala#exec-example
 
 .. _scenario-exec-session-expression:
 
 ``exec`` can also be passed an :ref:`Expression <expression>` function.
 
-This can be used for manually debugging or editing the :ref:`Session <expression>`, e.g.::
+This can be used for manually debugging or editing the :ref:`Session <expression>`, e.g.:
 
-  exec { session =>
-    // displays the content of the session in the console (debugging only)
-    println(session)
-
-    // return the original session
-    session
-  }
-
-  exec { session =>
-    // return a new session instance with a new "foo" attribute whose value is "bar"
-    session.set("foo", "bar")
-  }
+.. includecode:: code/ScenarioSample.scala#session-lambda
 
 .. note::
-  For those who wonder how the plumbing works and how one can return a ``Session`` instead of of ``Validation[Session]`` in the above examples,
+  For those who wonder how the plumbing works and how you can return a ``Session`` instead of ``Validation[Session]`` in the above examples,
   that's thanks to an implicit conversion.
+
+.. warning::
+  Gatling DSL components are immutable ``ActionBuilder``\(s) that have to be chained altogether and are only built once on startup.
+  The results is a workflow chain of ``Action``\(s).
+  These builders don't do anything by themselves, they don't trigger any side effect, they are just definitions.
+  As a result, creating such DSL components at runtime in functions is completely meaningless.
+  If you want conditional paths in your execution flow, use the proper DSL components (``doIf``, ``randomSwitch``, etc)
+
+.. includecode:: code/ScenarioSample.scala#session-improper
 
 .. _scenario-exec-function-flatten:
 
-``flattenMapIntoAttribute`` is a built-in Session Expression like mentioned above.
+``flattenMapIntoAttributes`` is a built-in Session Expression as mentioned above.
 
-It exposes the content of a Map into attributes, e.g.::
+It exposes the content of a Map into attributes, e.g.:
 
-  // assuming the Session contains an attribute named "theMap" whose content is Map("foo" -> "bar", "baz" -> "qix")
-
-  .exec(flattenMapIntoAttributes("${theMap}"))
-
-  // makes so that the Session contains 2 new attributes "foo" and "baz".
+.. includecode:: code/ScenarioSample.scala#flattenMapIntoAttributes
 
 Pause
 -----
 
 .. _scenario-pause:
 
-pause
-^^^^^
+``pause``
+^^^^^^^^^
 
 When a user sees a page he/she often reads what is shown and then chooses to click on another link.
 To reproduce this behavior, the pause method is used.
@@ -93,31 +87,30 @@ There are several ways of using it:
   * ``pause(min: String, max: String, unit: TimeUnit)``
   * ``pause(min: Expression[Duration], max: Expression[Duration])``
 
+.. note::
+  All those methods also have an optional force parameter that overrides the pause type defined in the set up.
+  Possible values are the :ref:`same ones than for global definition <simulation-setup-pause>`.
+
 .. _scenario-pace:
 
-pace
-^^^^
+``pace``
+^^^^^^^^
 
 If you want to control how frequently an action is executed, to target *iterations per hour* type volumes.
 Gatling support a dedicated type of pause: ``pace``, which adjusts its wait time depending on how long the chained action took.
-E.g.::
+E.g.:
 
-  forever(
-    pace(5 seconds)
-    .exec(
-      pause(1 second, 4 seconds) // Will be run every 5 seconds, irrespective of what pause time is used
-    )
-  )
+.. includecode:: code/ScenarioSample.scala#pace
 
 There are several ways of using it:
 
-* Fixed pause duration:
+* Fixed pace duration:
 
   * ``pace(duration: Duration)``
   * ``pace(duration: String, unit: TimeUnit = TimeUnit.SECONDS)``
   * ``pace(duration: Expression[Duration])``
 
-* Uniform random pause duration:
+* Uniform random pace duration:
 
   * ``pace(min: Duration, max: Duration)``
   * ``pace(min: String, max: String, unit: TimeUnit)``
@@ -125,53 +118,48 @@ There are several ways of using it:
 
 .. _scenario-rendez-vous:
 
-rendezVous
-^^^^^^^^^^
+``rendezVous``
+^^^^^^^^^^^^^^
 
-In some cases, you may want to run some requests, then pause users until all other users have reached a *rendezvous point*.
+In some cases, you may want to run some requests, then pause users until all other users have reached a *rendez-vous point*.
 For this purpose Gatling has the ``rendezVous(users: Int)`` method which takes the number of users to wait.
 
 .. _scenario-loops:
 
 Loop statements
 ---------------
+.. warning::
+  When using the ``counterName`` parameter to force loop index attribute name, be careful to only use it in a read-only way.
+  Otherwise, you might break Gatling underlying component's internal logic.
 
 .. _scenario-repeat:
 
-repeat
-^^^^^^
+``repeat``
+^^^^^^^^^^
 
-::
+Repeat the loop a specified amount of times.
 
-  .repeat(times, counterName) {
-    myChain
-  }
+.. includecode:: code/ScenarioSample.scala#repeat-example
 
-*times* can be an Int, an EL pointing to an Int Session attribute, or an ``Expresion[Int]``.
+*times* can be an Int, an EL string pointing to an Int Session attribute, or an ``Expression[Int]``.
 
 *counterName* is optional and can be used to force the name of the loop counter.
 Current value can be retrieved on the Session as an attribute with a *counterName* name.
 
+.. includecode:: code/ScenarioSample.scala#repeat-variants
+
 .. warning:: Don't forget that the counter starts at 0!
-
-::
-
-  .repeat(20) {myChain}     // will loop on myChain 20 times
-  .repeat("${myKey}") {}    // will loop on myChain as many times as the Int value of the Session attribute myKey
-  .repeat(session => /* something that returns an Int*/) {}
 
 .. _scenario-foreach:
 
-foreach
-^^^^^^^
+``foreach``
+^^^^^^^^^^^
 
-::
+Repeat the loop for each element in the specified sequence.
 
-  .foreach(sequenceName, elementName, counterName) {
-    myChain
-  }
+.. includecode:: code/ScenarioSample.scala#foreach
 
-*sequenceName* is the name of a sequence attribute in the ``Session``.
+*sequenceName* can be a sequence, an EL string pointing to a ``Seq[Any]`` Session attribute, or an ``Expression[Seq[Any]]``
 
 *elementName* is a the name of the Session attribute that will hold the current element.
 
@@ -179,14 +167,72 @@ foreach
 
 .. _scenario-during:
 
-during
-^^^^^^
+``during``
+^^^^^^^^^^
 
-::
+Iterate over the loop during the specified amount of time.
 
-  .during(duration, counterName) {
-    myChain
-  }
+.. includecode:: code/ScenarioSample.scala#during
+
+*duration* can be an Int for a duration in seconds, or a duration expressed like 500 milliseconds.
+
+*counterName* is optional.
+
+*exitASAP* is optional and defaults to true. If true, the condition will be evaluated for each element inside the loop, possibly causing to exit before reaching the end of the iteration.
+
+.. _scenario-aslongas:
+
+``asLongAs``
+^^^^^^^^^^^^
+
+Iterate over the loop as long as the condition is satisfied.
+
+.. includecode:: code/ScenarioSample.scala#asLongAs
+
+*condition* is a session function that returns a boolean.
+
+*counterName* is optional.
+
+*exitASAP* is optional and defaults to false. If true, the condition will be evaluated for each element inside the loop, possibly causing to exit before reaching the end of the iteration.
+
+.. _scenario-doWhile:
+
+``doWhile``
+^^^^^^^^^^^
+
+Similar to ``asLongAs`` but the condition is evaluated after the loop.
+
+.. includecode:: code/ScenarioSample.scala#doWhile
+
+*condition* is a session function that returns a boolean.
+
+*counterName* is optional.
+
+.. _scenario-asLongAsDuring:
+
+``asLongAsDuring``
+^^^^^^^^^^^^^^^^^^
+
+Iterate over the loop as long as the condition is satisfied and the duration hasn't been reached.
+
+.. includecode:: code/ScenarioSample.scala#asLongAsDuring
+
+*condition* is a session function that returns a boolean.
+
+*duration* can be an Int for a duration in seconds, or a duration expressed like 500 milliseconds.
+
+*counterName* is optional.
+
+.. _scenario-doWhileDuring:
+
+``doWhileDuring``
+^^^^^^^^^^^^^^^^^
+
+Similar to ``asLongAsDuring`` but the condition is evaluated after the loop.
+
+.. includecode:: code/ScenarioSample.scala#doWhileDuring
+
+*condition* is a session function that returns a boolean.
 
 *duration* can be an Int for a duration in seconds, or a duration expressed like 500 milliseconds.
 
@@ -194,28 +240,12 @@ during
 
 .. _scenario-forever:
 
-forever
-^^^^^^^
+``forever``
+^^^^^^^^^^^
 
-::
+Iterate over the loop forever.
 
-  .forever(counterName) {
-    myChain
-  }
-
-*counterName* is optional.
-
-.. _scenario-aslongas:
-
-asLongAs
-^^^^^^^^
-::
-
-  .asLongAs(condition, counterName) {
-    myChain
-  }
-
-*condition* is session function that returns a boolean.
+.. includecode:: code/ScenarioSample.scala#forever
 
 *counterName* is optional.
 
@@ -226,164 +256,124 @@ Conditional statements
 
 .. _scenario-doif:
 
-doIf
-^^^^
+``doIf``
+^^^^^^^^
 
 Gatling's DSL has conditional execution support.
-If you want to execute a specific chain of actions only when some condition is satisfied, you can do so using the doIf method.
-It will check if a value in the session equals the one you specified::
+If you want to execute a specific chain of actions only when some condition is satisfied, you can do so using the ``doIf`` method.
 
-  .doIf("${myKey}", "myValue") {
-     exec( http("...") ... ) // executed if the session value stored in "myKey" equals "myValue"
-  }
+.. includecode:: code/ScenarioSample.scala#doIf
 
-As you can see, the executed actions if the condition is false are optional.
+If you want to test complex conditions, you'll have to pass an ``Expression[Boolean]``:
 
-If you want to test other conditions than equality, you'll have to use an ``Expression[Boolean]`` to write it::
+.. includecode:: code/ScenarioSample.scala#doIf-session
 
-  .doIf(session => session.getTypedAttribute[String]("myKey").startsWith("admin")) {
-    exec( http("if true") ... ) // executed if the session value stored in "myKey" starts with "admin"
-  }
+.. _scenario-doifequals:
+
+``doIfEquals``
+^^^^^^^^^^^^^^
+
+Îf your test condition is simply to compare two values, you can simply use ``doIfEquals``:
+
+.. includecode:: code/ScenarioSample.scala#doIfEquals
 
 .. _scenario-doiforelse:
 
-doIfOrElse
-^^^^^^^^^^
+``doIfOrElse``
+^^^^^^^^^^^^^^
 
 Similar to ``doIf``, but with a fallback if the condition evaluates to false.
-::
 
-  .doIfOrElse(session => session.getTypedAttribute[String]("myKey").startsWith("admin")) {
-     exec( http("if true") ... ) // executed if the session value stored in "myKey" starts with "admin"
-  } {
-     exec( http("if false") ... ) // executed if the session value stored in "myKey" does not start with "admin"
-  }
+.. includecode:: code/ScenarioSample.scala#doIfOrElse
 
 .. warning:: ``doIfOrElse`` only takes an ``Expression[Boolean]``, not the key/value signature.
 
 .. _scenario-doifequalsorelse:
 
-doIfEqualsOrElse
-^^^^^^^^^^^^^^^^
+``doIfEqualsOrElse``
+^^^^^^^^^^^^^^^^^^^^
 
-Similar to ``doIfOrElse`` but test the equality of an expected and an actual value.
-::
+Similar to ``doIfEquals`` but with a fallback if the condition evaluates to false.
 
-  .doIfOrElse(session => session.getTypedAttribute[String]("myKey"), "expectedValue") {
-     exec( http("if true") ... ) // executed if the session value stored in "myKey" equals to "expectedValue"
-  } {
-     exec( http("if false") ... ) // executed if the session value stored in "myKey" not equals to "expectedValue"
-  }
+.. includecode:: code/ScenarioSample.scala#doIfEqualsOrElse
 
 .. _scenario-doswitch:
 
-doSwitch
-^^^^^^^^
+``doSwitch``
+^^^^^^^^^^^^
 
-Add a switch in the chain. Every possible subchain is defined with a key.
+Add a switch in the chain. Every possible sub-chain is defined with a key.
 Switch is selected through the matching of a key with the evaluation of the passed expression.
-If no switch is selected, switch is bypassed.
-::
+If no switch is selected, the switch is bypassed.
 
-  .doSwitch("${myKey}") ( // beware: use parentheses, not curly braces!
-    key1 -> chain1,
-    key1-> chain2
-  )
+.. includecode:: code/ScenarioSample.scala#doSwitch
 
 .. _scenario-doswitchorelse:
 
-doSwitchOrElse
-^^^^^^^^^^^^^^
+``doSwitchOrElse``
+^^^^^^^^^^^^^^^^^^
 
 Similar to ``doSwitch``, but with a fallback if no switch is selected.
-::
 
-  .doSwitchOrElse("${myKey}") ( // beware: use parentheses, not curly braces!
-    key1 -> chain1,
-    key1-> chain2
-  ) (
-    fallbackChain
-  )
+.. includecode:: code/ScenarioSample.scala#doSwitchOrElse
 
 .. _scenario-randomswitch:
 
-randomSwitch
-^^^^^^^^^^^^
+``randomSwitch``
+^^^^^^^^^^^^^^^^
 
 ``randomSwitch`` can be used to emulate simple Markov chains.
 Simple means cyclic graphs are not currently supported.
-::
 
-  .randomSwitch( // beware: use parentheses, not curly braces!
-      percentage1 -> chain1,
-      percentage2 -> chain2
-  )
+.. includecode:: code/ScenarioSample.scala#randomSwitch
 
 Percentages sum can't exceed 100%.
-If sum is inferior to 100%, users that won't fall into one of the chains will simply exit the switch and continue.
+If sum is less than 100%, users that won't fall into one of the chains will simply exit the switch and continue.
 Once users are done with the switch, they simply continue with the rest of the scenario.
 
 .. note:: Percentages should be format as following: 50% -> 50, 33.3% -> 33.3 and so on.
 
 .. _scenario-randomswitchorelse:
 
-randomSwitchOrElse
-^^^^^^^^^^^^^^^^^^
+``randomSwitchOrElse``
+^^^^^^^^^^^^^^^^^^^^^^
 
-Similar to ``randomSwitch``, but with a fallback if no switch is selected (ie: random number exceeds percentages sum).
-::
+Similar to ``randomSwitch``, but with a fallback if no switch is selected (i.e.: random number exceeds percentages sum).
 
-  .randomSwitchOrElse( // beware: use parentheses, not curly braces!
-      percentage1 -> chain1,
-      percentage2 -> chain2
-  ) {
-    myFallbackChain
-  }
+.. includecode:: code/ScenarioSample.scala#randomSwitchOrElse
 
 .. _scenario-uniformrandomswitch:
 
-uniformRandomSwitch
-^^^^^^^^^^^^^^^^^^^
+``uniformRandomSwitch``
+^^^^^^^^^^^^^^^^^^^^^^^
 
 Similar to ``randomSwitch``, but with an uniform distribution amongst chains.
-::
 
-  .uniformRandomSwitch( // beware: use parentheses, not curly braces!
-    chain1,
-    chain2
-  )
+.. includecode:: code/ScenarioSample.scala#uniformRandomSwitch
 
 .. _scenario-roundrobinswitch:
 
-roundRobinSwitch
-^^^^^^^^^^^^^^^^
+``roundRobinSwitch``
+^^^^^^^^^^^^^^^^^^^^
 
 Similar to ``randomSwitch``, but dispatch uses a round-robin strategy.
-::
 
-  .roundRobinSwitch( // beware: use parentheses, not curly braces!
-    chain1,
-    chain2
-  )
+.. includecode:: code/ScenarioSample.scala#roundRobinSwitch
 
 .. _scenario-errors:
 
-Errors management
------------------
+Errors handling
+---------------
 
 .. _scenario-trymax:
 
-tryMax
-^^^^^^
+``tryMax``
+^^^^^^^^^^
 
-::
-
-  .tryMax(times, counterName) {
-    myChain
-  }
+.. includecode:: code/ScenarioSample.scala#tryMax
 
 *myChain* is expected to succeed as a whole.
-If an error happens (a technical exception such as a time out, or a failed check), the user will bypass the rest of the chain and start over from the beginning.
+If an error happens (a technical exception such as a timeout, or a failed check), the user will bypass the rest of the chain and start over from the beginning.
 
 *times* is the maximum number of attempts.
 
@@ -391,24 +381,19 @@ If an error happens (a technical exception such as a time out, or a failed check
 
 .. _scenario-exitblockonfail:
 
-exitBlockOnFail
-^^^^^^^^^^^^^^^
+``exitBlockOnFail``
+^^^^^^^^^^^^^^^^^^^
 
-::
-
-  .exitBlockOnFail {
-    myChain
-  }
+.. includecode:: code/ScenarioSample.scala#exitBlockOnFail
 
 Quite similar to tryMax, but without looping on failure.
 
 .. _scenario-exithereiffailed:
 
-exitHereIfFailed
-^^^^^^^^^^^^^^^^
+``exitHereIfFailed``
+^^^^^^^^^^^^^^^^^^^^
 
-::
-  .exitHereIfFailed
+.. includecode:: code/ScenarioSample.scala#exitHereIfFailed
 
 Make the user exit the scenario from this point if it previously had an error.
 
@@ -417,28 +402,21 @@ Make the user exit the scenario from this point if it previously had an error.
 Groups definition
 -----------------
 
-::
-
-  .group(groupName) {
-    myChain
-  }
+.. includecode:: code/ScenarioSample.scala#group
 
 Create group of requests to model process or requests in a same page.
-Groups can be imbricated into another.
+Groups can be nested.
 
-When using groups, statistics calculated for each request are aggregated in the parent group.
-Aggregated statistics are displayed on the report like request statistics.
-
-Computed cumulated times currently include pauses.
+.. warning:: Beware that group names mustn't contain commas.
 
 .. _scenario-protocols:
 
 Protocol definition
 ===================
 
-You can configure protocols at scenario level with ``protocols`` method::
+You can configure protocols at scenario level with ``protocols`` method:
 
-  scn.protocols(httpConf)
+.. includecode:: code/ScenarioSample.scala#protocol
 
 See the dedicated section for http protocol definition :ref:`here <http-protocol>`.
 
@@ -454,8 +432,10 @@ You can configure pause definition at scenario level, see :ref:`here <simulation
 Throttling
 ==========
 
-You can also configure throttling at scenario level with ``throttle`` method::
+You can also configure throttling at scenario level with ``throttle`` method.
 
-  scn.throttle(reachRps(100) in (10 seconds), holdFor(10 minute))
+This way, you can configure different throttling profiles for different scenarios running in the same simulation.
+
+.. includecode:: code/ScenarioSample.scala#throttling
 
 For further information see the dedicated section :ref:`here <simulation-setup-throttling>`.

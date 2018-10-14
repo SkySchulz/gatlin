@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,131 +13,227 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.request.builder
 
-import java.net.URI
-import com.ning.http.client.{ Request, RequestBuilder => AHCRequestBuilder }
-import com.typesafe.scalalogging.slf4j.StrictLogging
-import io.gatling.core.config.GatlingConfiguration.configuration
-import io.gatling.core.session.{ Expression, Session }
-import io.gatling.core.validation.{ FailureWrapper, SuccessWrapper, Validation }
+import java.nio.charset.Charset
+
+import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
+
+import io.gatling.commons.util.Throwables._
+import io.gatling.commons.validation._
+import io.gatling.core.config.GatlingConfiguration
+import io.gatling.core.session._
 import io.gatling.http.HeaderNames
-import io.gatling.http.ahc.ConnectionPoolKeyStrategy
-import io.gatling.http.config.HttpProtocol
-import io.gatling.http.cookie.CookieHandling
+import io.gatling.http.cache.HttpCaches
+import io.gatling.http.client.{ Request, SignatureCalculator, RequestBuilder => AhcRequestBuilder }
+import io.gatling.http.client.ahc.uri.Uri
+import io.gatling.http.cookie.CookieSupport
+import io.gatling.http.protocol.HttpProtocol
 import io.gatling.http.referer.RefererHandling
 import io.gatling.http.util.HttpHelper
 
-abstract class RequestExpressionBuilder(commonAttributes: CommonAttributes, protocol: HttpProtocol) extends StrictLogging {
+import com.typesafe.scalalogging.LazyLogging
 
-  def makeAbsolute(url: String): Validation[String]
+object RequestExpressionBuilder {
+  val BuildRequestErrorMapper: String => String = "Failed to build request: " + _
 
-  def buildURI(session: Session): Validation[URI] = {
+  type RequestBuilderConfigureRaw = Session => AhcRequestBuilder => AhcRequestBuilder
+  type RequestBuilderConfigure = Session => AhcRequestBuilder => Validation[AhcRequestBuilder]
 
-      def createURI(url: String): Validation[URI] =
-        try
-          URI.create(url).success
-        catch {
-          case e: Exception => s"url $url can't be parsed into a URI: ${e.getMessage}".failure
+  val ConfigureIdentityRaw: RequestBuilderConfigureRaw = _ => identity
+  val ConfigureIdentity: RequestBuilderConfigure = _ => _.success
+}
+
+abstract class RequestExpressionBuilder(
+    commonAttributes: CommonAttributes,
+    httpCaches:       HttpCaches,
+    httpProtocol:     HttpProtocol,
+    configuration:    GatlingConfiguration
+)
+  extends LazyLogging {
+
+  import RequestExpressionBuilder._
+
+  protected val charset: Charset = configuration.core.charset
+  protected val headers: Map[String, Expression[String]] = httpProtocol.requestPart.headers ++ commonAttributes.headers
+  private val refererHeaderIsUndefined: Boolean = !headers.contains(HeaderNames.Referer)
+  protected val contentTypeHeaderIsUndefined: Boolean = !headers.contains(HeaderNames.ContentType)
+  private val disableUrlEncoding: Boolean = commonAttributes.disableUrlEncoding.getOrElse(httpProtocol.requestPart.disableUrlEncoding)
+  private val signatureCalculatorExpression: Option[Expression[SignatureCalculator]] = commonAttributes.signatureCalculator.orElse(httpProtocol.requestPart.signatureCalculator)
+
+  protected def baseUrl: Session => Option[String] =
+    if (httpProtocol.baseUrls.size <= 1) {
+      val baseUrl = httpProtocol.baseUrls.headOption
+      _ => baseUrl
+    } else {
+      httpCaches.baseUrl
+    }
+
+  protected def protocolBaseUrls: List[String] =
+    httpProtocol.baseUrls
+
+  protected def isAbsoluteUrl(url: String): Boolean =
+    HttpHelper.isAbsoluteHttpUrl(url)
+
+  private def resolveRelativeAgainstBaseUrl(relativeUrl: String, baseUrl: Option[String]): Validation[Uri] =
+    baseUrl match {
+      case Some(base) =>
+        val fullUrl = base + relativeUrl
+        try {
+          Uri.create(fullUrl).success
+        } catch {
+          // don't use safe in order to save lambda instances
+          case NonFatal(e) => s"url $fullUrl can't be parsed into an Uri: ${e.rootMessage}".failure
+        }
+      case _ => s"No baseUrl defined but provided url is relative : $relativeUrl".failure
+    }
+
+  private def makeAbsolute(session: Session, url: String): Validation[Uri] =
+    if (isAbsoluteUrl(url))
+      Uri.create(url).success
+    else
+      resolveRelativeAgainstBaseUrl(url, baseUrl(session))
+
+  private val buildURI: Expression[Uri] =
+    commonAttributes.urlOrURI match {
+      case Left(StaticStringExpression(staticUrl)) if protocolBaseUrls.size <= 1 =>
+        if (isAbsoluteUrl(staticUrl)) {
+          Uri.create(staticUrl).expressionSuccess
+        } else {
+          val uriV = resolveRelativeAgainstBaseUrl(staticUrl, protocolBaseUrls.headOption)
+          _ => uriV
         }
 
-    commonAttributes.urlOrURI match {
-      case Left(url)  => url(session).flatMap(makeAbsolute).flatMap(createURI)
-      case Right(uri) => uri.success
+      case Left(url) =>
+        session =>
+          for {
+            resolvedUrl <- url(session)
+            absoluteUri <- makeAbsolute(session, resolvedUrl)
+          } yield absoluteUri
+      case Right(uri) => uri.expressionSuccess
+    }
+
+  // note: DNS cache is supposed to be set early
+  private def configureNameResolver(session: Session, requestBuilder: AhcRequestBuilder): Unit =
+    httpCaches.nameResolver(session).foreach(requestBuilder.setNameResolver)
+
+  private val proxy = commonAttributes.proxy.orElse(httpProtocol.proxyPart.proxy)
+
+  private def configureProxy(requestBuilder: AhcRequestBuilder): Unit =
+    proxy.foreach { proxy =>
+      if (!httpProtocol.proxyPart.proxyExceptions.contains(requestBuilder.getUri.getHost)) {
+        requestBuilder.setProxyServer(proxy)
+      }
+    }
+
+  private def configureCookies(session: Session, requestBuilder: AhcRequestBuilder): Unit = {
+    val cookies = CookieSupport.getStoredCookies(session, requestBuilder.getUri)
+    if (cookies.nonEmpty) {
+      requestBuilder.setCookies(cookies.asJava)
     }
   }
 
-  def configureProxy(uri: URI)(requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] = {
-    if (!protocol.proxyPart.proxyExceptions.contains(uri.getHost)) {
-      if (HttpHelper.isSecure(uri))
-        commonAttributes.secureProxy.orElse(protocol.proxyPart.secureProxy).foreach(requestBuilder.setProxyServer)
+  private val configureQueryParams: RequestBuilderConfigure =
+    commonAttributes.queryParams match {
+      case Nil         => ConfigureIdentity
+      case queryParams => configureQueryParams0(queryParams)
+    }
+
+  private def configureQueryParams0(queryParams: List[HttpParam]): RequestBuilderConfigure =
+    session => requestBuilder => queryParams.resolveParamJList(session).map(requestBuilder.setQueryParams)
+
+  private val configureVirtualHost: RequestBuilderConfigure =
+    commonAttributes.virtualHost.orElse(httpProtocol.enginePart.virtualHost) match {
+      case None              => ConfigureIdentity
+      case Some(virtualHost) => configureVirtualHost0(virtualHost)
+    }
+
+  private def configureVirtualHost0(virtualHost: Expression[String]): RequestBuilderConfigure =
+    session => requestBuilder => virtualHost(session).map(requestBuilder.setVirtualHost)
+
+  protected def addDefaultHeaders(session: Session)(requestBuilder: AhcRequestBuilder): AhcRequestBuilder = {
+    if (httpProtocol.requestPart.autoReferer && refererHeaderIsUndefined) {
+      RefererHandling.getStoredReferer(session).map(requestBuilder.addHeader(HeaderNames.Referer, _))
+    }
+    requestBuilder
+  }
+
+  private val configureHeaders: RequestBuilderConfigure =
+    if (headers.isEmpty)
+      session => addDefaultHeaders(session)(_).success
+    else {
+      val staticHeaders = headers.collect { case (key, StaticStringExpression(value)) => key -> value }
+
+      if (staticHeaders.size == headers.size)
+        configureStaticHeaders(staticHeaders)
       else
-        commonAttributes.proxy.orElse(protocol.proxyPart.proxy).foreach(requestBuilder.setProxyServer)
+        configureDynamicHeaders
     }
-    requestBuilder.success
+
+  private def configureStaticHeaders(staticHeaders: Iterable[(String, String)]): RequestBuilderConfigure = {
+    val addHeaders: AhcRequestBuilder => Validation[AhcRequestBuilder] = requestBuilder => {
+      staticHeaders.foreach { case (key, value) => requestBuilder.addHeader(key, value) }
+      requestBuilder.success
+    }
+    session => requestBuilder => addHeaders(requestBuilder).map(addDefaultHeaders(session))
   }
 
-  def configureCookies(session: Session, uri: URI)(requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] = {
-    CookieHandling.getStoredCookies(session, uri).foreach(requestBuilder.addCookie)
-    requestBuilder.success
-  }
+  private def configureDynamicHeaders: RequestBuilderConfigure =
+    session => requestBuilder => {
+      val requestBuilderWithHeaders = headers.foldLeft(requestBuilder.success) { (requestBuilder, header) =>
+        val (key, value) = header
+        for {
+          requestBuilder <- requestBuilder
+          value <- value(session)
+        } yield requestBuilder.addHeader(key, value)
+      }
 
-  def configureQuery(session: Session, uri: URI)(requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] = {
-
-    if (commonAttributes.queryParams.nonEmpty)
-      commonAttributes.queryParams.resolveFluentStringsMap(session).map(requestBuilder.setQueryParameters(_).setURI(uri))
-    else
-      requestBuilder.setURI(uri).success
-  }
-
-  def configureVirtualHost(session: Session)(requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] =
-    commonAttributes.virtualHost.orElse(protocol.enginePart.virtualHost) match {
-      case Some(virtualHost) => virtualHost(session).map(requestBuilder.setVirtualHost)
-      case _                 => requestBuilder.success
+      requestBuilderWithHeaders.map(addDefaultHeaders(session))
     }
 
-  def configureHeaders(session: Session)(requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] = {
-
-    val headers = protocol.requestPart.baseHeaders ++ commonAttributes.headers
-
-    val requestBuilderWithHeaders = headers.foldLeft(requestBuilder.success) { (requestBuilder, header) =>
-      val (key, value) = header
-      for {
-        requestBuilder <- requestBuilder
-        value <- value(session)
-      } yield requestBuilder.addHeader(key, value)
+  private val configureRealm: RequestBuilderConfigure =
+    commonAttributes.realm.orElse(httpProtocol.requestPart.realm) match {
+      case Some(realm) => session => requestBuilder => realm(session).map(requestBuilder.setRealm)
+      case _ => ConfigureIdentity
     }
 
-    val additionalRefererHeader =
-      if (headers.contains(HeaderNames.Referer))
-        None
-      else
-        RefererHandling.getStoredReferer(session)
-
-    additionalRefererHeader match {
-      case Some(referer) => requestBuilderWithHeaders.map(_.addHeader(HeaderNames.Referer, referer))
-      case _             => requestBuilderWithHeaders
-    }
-  }
-
-  def configureRealm(session: Session)(requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] =
-    commonAttributes.realm.orElse(protocol.requestPart.realm) match {
-      case Some(realm) => realm(session).map(requestBuilder.setRealm)
-      case None        => requestBuilder.success
+  private def configureLocalAddress(session: Session, requestBuilder: AhcRequestBuilder): Unit =
+    if (httpProtocol.enginePart.localAddresses.nonEmpty) {
+      httpCaches.localAddress(session).foreach(requestBuilder.setLocalAddress)
     }
 
-  protected def configureRequestBuilder(session: Session, uri: URI, requestBuilder: AHCRequestBuilder): Validation[AHCRequestBuilder] =
-    configureProxy(uri)(requestBuilder)
-      .flatMap(configureCookies(session, uri))
-      .flatMap(configureQuery(session, uri))
+  private val configureSignatureCalculator: RequestBuilderConfigure =
+    signatureCalculatorExpression match {
+      case Some(signatureCalculator) =>
+        session => requestBuilder => signatureCalculator(session).map(requestBuilder.setSignatureCalculator)
+      case _ => ConfigureIdentity
+    }
+
+  protected def configureRequestBuilder(session: Session, requestBuilder: AhcRequestBuilder): Validation[AhcRequestBuilder] = {
+    configureProxy(requestBuilder)
+    configureCookies(session, requestBuilder)
+    configureNameResolver(session, requestBuilder)
+    configureLocalAddress(session, requestBuilder)
+
+    configureQueryParams(session)(requestBuilder)
       .flatMap(configureVirtualHost(session))
       .flatMap(configureHeaders(session))
       .flatMap(configureRealm(session))
+      .flatMap(configureSignatureCalculator(session))
+  }
 
   def build: Expression[Request] =
-    (session: Session) => {
-      val useRawUrl = commonAttributes.useRawUrl.getOrElse(configuration.http.ahc.useRawUrl)
-      val requestBuilder = new AHCRequestBuilder(commonAttributes.method, useRawUrl)
-
-      requestBuilder.setBodyEncoding(configuration.core.encoding)
-
-      if (!protocol.enginePart.shareConnections)
-        requestBuilder.setConnectionPoolKeyStrategy(new ConnectionPoolKeyStrategy(session))
-
-      protocol.enginePart.localAddress.foreach(requestBuilder.setLocalInetAddress)
-
-      commonAttributes.address.foreach(requestBuilder.setInetAddress)
-
-      try
+    session =>
+      safely(BuildRequestErrorMapper) {
         for {
           uri <- buildURI(session)
-          rb <- configureRequestBuilder(session, uri, requestBuilder)
+          requestBuilder = new AhcRequestBuilder(commonAttributes.method, uri)
+            .setDefaultCharset(configuration.core.charset)
+            .setFixUrlEncoding(!disableUrlEncoding)
+            .setRequestTimeout(configuration.http.ahc.requestTimeout.toMillis)
+          rb <- configureRequestBuilder(session, requestBuilder)
         } yield rb.build
-
-      catch {
-        case e: Exception =>
-          logger.warn("Failed to build request", e)
-          s"Failed to build request: ${e.getMessage}".failure
       }
-    }
 }

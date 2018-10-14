@@ -1,215 +1,150 @@
 .. _http-ws:
 
 #########
-Websocket
+WebSocket
 #########
 
-Websocket support is an extension to the HTTP DSL, whose entry point is the ``ws(requestName: Expression[String])`` method.
+WebSocket support was initially contributed by `Andrew Duffy <https://github.com/amjjd>`_.
 
-Websocket protocol is very different from the HTTP one as the communication is 2 ways: both client-to-server and server-to-client, so the model is different from the HTTP request/response pair.
+WebSocket support is an extension to the HTTP DSL, whose entry point is the ``ws(requestName: Expression[String])`` method.
 
-As a consequence, main HTTP branch and a Websocket branch can exist in a Gatling scenario in a dissociated way, in parallel.
-When doing so, each flow branch has it's own state, so a user might have to reconciliate them, for example when capturing data from a websocket check and wanting this data to be available to the HTTP branch.
+WebSocket protocol is very different from the HTTP one as the communication is 2 ways: both client-to-server and server-to-client, so the model is different from the HTTP request/response pair.
+
+As a consequence, main HTTP branch and a WebSocket branch can exist in a Gatling scenario in a dissociated way, in parallel.
+When doing so, each flow branch has it's own state, so a user might have to reconcile them, for example when capturing data from a WebSocket check and wanting this data to be available to the HTTP branch.
 
 Common operations
 =================
 
 .. _http-ws-name:
 
-If you want to deal with several websockets per virtual users, you have to give them a name and pass this name on each ws operation:
+If you want to deal with several WebSockets per virtual users, you have to give them a name and pass this name on each ws operation:
 
 ``wsName(name: String)``
 
-For example::
+For example:
 
-  ws("WS Operation").wsName("myCustomName")
+.. includecode:: code/WsSample.scala#wsName
 
-Of course, this step is not required if you deal with one single websocket per virtual user.
+If you set an explicit name for the WebSocket, you'll have to make it explicit for every other WebSocket actions you'll define later in the scenario.
 
-.. _http-ws-open:
+Of course, this step is not required if you deal with one single WebSocket per virtual user.
 
-Open
-----
+.. _http-ws-connect:
 
-The first thing is to open a websocket:
+Connect
+-------
 
-``open(url: Expression[String])``
+The first thing is to connect a WebSocket:
 
-For example::
+``connect(url: Expression[String])``
 
-  .exec(ws("Connect WS").open("/room/chat?username=steph"))
+For example:
 
+.. includecode:: code/WsSample.scala#connect
+
+You can define a chain of actions to be performed after (re-)connecting with ``onConnected``:
+
+.. includecode:: code/WsSample.scala#onConnected
 
 .. _http-ws-close:
 
 Close
 -----
 
-When you're done with a websocket, you can close it:
+When you're done with a WebSocket, you can close it:
 
 ``close``
 
-For example::
+For example:
 
-  .exec(ws("Close WS").close)
+.. includecode:: code/WsSample.scala#close
 
 .. _http-ws-send:
 
 Send a Message
 --------------
 
-One can send 2 forms of messages: binary and text:
+You may send text or binary messages:
 
-``sendText(text: Expression[String])``
-``sendBytes(bytes: Expression[Array[Byte]])``
+* ``sendText(text: Expression[String])``
+* ``sendBytes(bytes: Expression[Array[Byte]])``
 
-For example::
+For example:
 
-  .exec(ws("Message")
-    .sendText("""{"text": "Hello, I'm ${id} and this is message ${i}!"}"""))
+.. includecode:: code/WsSample.scala#sendText
+
+.. _http-ws-checks:
 
 Server Messages: Checks
 =======================
 
-Dealing with incoming messages from the server is done with checks, passed with the usual ``check()`` method.
-
-Gatling currently only support one check at a time per websocket.
+Gatling currently only supports blocking checks that will waiting until receiving expected message or timing out.
 
 .. _http-ws-check-set:
 
 Set a Check
 -----------
 
-Checks can be set in 2 ways.
+You can set a check right after connecting:
 
-First, when sending a message::
+.. includecode:: code/WsSample.scala#check-from-connect
 
-  exec(ws("Send").sendText("hello").check(...))
+Or you can set a check right after sending a message to the server:
 
+.. includecode:: code/WsSample.scala#check-from-message
 
-Then, directly from the main HTTP flow::
+You can set multiple checks sequentially. Each one will expect one single frame.
 
-  exec(ws("Set Check").check(...))
+You can configure multiple checks in a single sequence:
 
-If a check was already registered on the websocket at this time, it's considered as failed and replaced with the new one.
+.. includecode:: code/WsSample.scala#check-single-sequence
 
-.. _http-ws-check-cancel:
+You can also configure multiple check sequences with different timeouts:
 
-Cancel a Check
+.. includecode:: code/WsSample.scala#check-check-multiple-sequence
+
+Create a check
 --------------
 
-One can decide to cancel a pending check::
+You can create checks for text and binary frames with ``checkTextMessage`` and ``checkBinaryMessage``.
+You can use almost all the same check criteria as for HTTP requests.
 
-  exec(ws("Cancel Check").cancelCheck)
+.. includecode:: code/WsSample.scala#create-single-check
 
-.. _http-ws-check-build:
+You can have multiple criteria for a given message:
 
-Build a Check
--------------
+.. includecode:: code/WsSample.scala#create-multiple-checks
 
-Now, to the matter at heart, how to build a websocket check.
+.. _http-ws-matching:
 
-**Step 1: Blocking or non Blocking**
+Matching messages
+-----------------
 
-The first thing is to decide if the main HTTP flow is blocked until the check completes or not.
+You can define ``matching`` criteria to filter messages you want to check.
+Matching criterion is a standard check, except it doesn't take ``saveAs``.
+Non matching messages will be ignored.
 
-``wsListen`` creates a non blocking check: the main HTTP flow will go on and Gatling will listen for websocket incoming messages on the background.
+.. includecode:: code/WsSample.scala#matching
 
-``wsAwait`` creates a blocking check: the main HTTP flow is blocked until the check completes.
-
-**Step 2: Set the Timeout**
-
-``within(timeout: FiniteDuration)``
-
-**Step 3: Exit condition**
-
-``until(count: Int)``: the check will succeed as soon as Gatling has received the expected count of matching messages
-
-``expect(count: Int)``: Gatling will wait until the timeout and the check will succeed if it has received the expected count of matching messages
-
-``expect(range: Range)``: same as above, but use a range instead of a single expected count
-
-**Step 4: Matching condition**
-
-Websocket checks support the same kind of operations as for HTTP bodies:
-
-``regex(expression: Expression[String])``: use a regular expression
-
-``jsonPath(path: Expression[String])``: use JsonPath
-
-``jsonpJsonPath(path: Expression[String])``: use JsonPath on a JSONP String
-
-See :ref:`HTTP counterparts <http-check>` for more details.
-
-**Step 5: Saving** (optional)
-
-Just like regular HTTP checks, one can use checks for saving data into the virtual user's session.
-
-Here are an example::
-
-  exec(ws("Send Message")
-         .sendText("hello, I'm Stephane")
-         .check(wsListen.within(30 seconds).until(1).regex("hello (.*)").saveAs("name"))
-
-
-Reconciliate
-------------
-
-One complex thing is that, when using non blocking checks that save data, state is stored in a different flow than the main one.
-
-So, one has to reconciliate the main flow state and the websocket flow one.
-
-This can be done:
-
-* implicitly when performing an action on the websocket from the main flow, such as send a message to the server
-* explicitly with the ``reconciliate`` method.
-
-::
-
-  exec(ws("Reconciliate states").reconciliate)
-
+.. _http-ws-check-conf:
 
 Configuration
 =============
 
-Websocket support introduces new parameters on HttpProtocol:
+Websocket support introduces new HttpProtocol parameters:
 
-``wsBaseURL(url: String)``: similar to standard ``baseURL`` for HTTP, serves as root that will be prepended to all relative websocket urls
+``wsBaseUrl(url: String)``: similar to standard ``baseUrl`` for HTTP, serves as root that will be prepended to all relative WebSocket urls
 
-``wsBaseURLs(urls: String*)``: similar to standard ``baseURLs`` for HTTP, serves as roundrobin roots that will be prepended to all relative websocket urls
+``wsBaseUrls(urls: String*)``: similar to standard ``baseUrls`` for HTTP, serves as round-robin roots that will be prepended to all relative WebSocket urls
 
-``wsReconnect``: automatically reconnect a websocket that would have been closed by someone else than the client.
+``wsReconnect``: automatically reconnect a WebSocket that would have been closed by someone else than the client.
 
-``wsMaxReconnects(max: Int)``: set a limit on the number of times a websocket will be automatically reconnected
+``wsMaxReconnects(max: Int)``: set a limit on the number of times a WebSocket will be automatically reconnected
 
 Example
 =======
 
-Here's an example that runs against Play's chatroom sample::
+Here's an example that runs against `Play 2.2 <https://www.playframework.com/download#older-versions>`_'s chatroom sample (beware that this sample is missing from Play 2.3 and above):
 
-  val httpConf = http
-    .baseURL("http://localhost:9000")
-    .acceptHeader("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-    .doNotTrackHeader("1")
-    .acceptLanguageHeader("en-US,en;q=0.5")
-    .acceptEncodingHeader("gzip, deflate")
-    .userAgentHeader("Gatling2")
-    .wsBaseURL("ws://localhost:9000")
-
-  val scn = scenario("WebSocket")
-    .exec(http("Home").get("/"))
-    .pause(1)
-    .exec(session => session.set("id", "Steph" + session.userId))
-    .exec(http("Login").get("/room?username=${id}"))
-    .pause(1)
-    .exec(ws("Connect WS").open("/room/chat?username=${id}"))
-    .pause(1)
-    .repeat(2, "i") {
-      exec(ws("Say Hello WS")
-        .sendText("""{"text": "Hello, I'm ${id} and this is message ${i}!"}""")
-        .check(wsAwait.within(30).until(1).regex(".*I'm still alive.*"))
-      )
-      .pause(1)
-    }
-    .exec(ws("Close WS").close)
-
+.. includecode:: code/WsSample.scala#chatroom-example

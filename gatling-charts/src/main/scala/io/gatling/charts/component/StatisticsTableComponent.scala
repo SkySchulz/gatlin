@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,17 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.gatling.charts.component
 
-import com.dongxiguo.fastring.Fastring.Implicits.{ FastringContext, MkFastring }
+package io.gatling.charts.component
 
 import io.gatling.charts.config.ChartsFiles.GlobalPageName
 import io.gatling.charts.report.Container.{ Group, Request }
-import io.gatling.core.config.GatlingConfiguration.configuration
-import io.gatling.core.util.NumberHelper._
-import io.gatling.core.util.StringHelper._
+import io.gatling.core.config.GatlingConfiguration
+import io.gatling.commons.util.NumberHelper._
+import io.gatling.commons.util.StringHelper._
 
-class StatisticsTableComponent extends Component {
+import com.dongxiguo.fastring.Fastring.Implicits._
+
+private[charts] class StatisticsTableComponent(implicit configuration: GatlingConfiguration) extends Component {
 
   private val MaxRequestNameSize = 20
   private val NumberOfCharsBeforeDots = 8
@@ -31,9 +32,13 @@ class StatisticsTableComponent extends Component {
 
   val html = {
 
-    val pct1 = configuration.charting.indicators.percentile1.toRank + " pct"
-    val pct2 = configuration.charting.indicators.percentile2.toRank + " pct"
-    val responseTimeFields = Vector("Min", "Max", "Mean", "Std Dev", pct1, pct2, "Req/s")
+    def pctTitle(pct: Double) = pct.toRank + " pct"
+
+    val pct1 = pctTitle(configuration.charting.indicators.percentile1)
+    val pct2 = pctTitle(configuration.charting.indicators.percentile2)
+    val pct3 = pctTitle(configuration.charting.indicators.percentile3)
+    val pct4 = pctTitle(configuration.charting.indicators.percentile4)
+    val responseTimeFields = Vector("Min", pct1, pct2, pct3, pct4, "Max", "Mean", "Std Dev")
 
     fast"""
                         <div class="statistics extensible-geant collapsed">
@@ -47,9 +52,7 @@ class StatisticsTableComponent extends Component {
                                 <thead>
                                     <tr>
                                         <th rowspan="2" id="col-1" class="header sortable sorted-up"><span>Requests</span></th>
-                                        <th rowspan="2"></th>
-                                        <th colspan="4" class="header"><span class="executions">Executions</span></th>
-                                        <th rowspan="2"></th>
+                                        <th colspan="5" class="header"><span class="executions">Executions</span></th>
                                         <th colspan="${responseTimeFields.size}" class="header"><span class="response-time">Response Time (ms)</span></th>
                                     </tr>
                                     <tr>
@@ -57,7 +60,8 @@ class StatisticsTableComponent extends Component {
                                         <th id="col-3" class="header sortable"><span>OK</span></th>
                                         <th id="col-4" class="header sortable"><span>KO</span></th>
                                         <th id="col-5" class="header sortable"><span>% KO</span></th>
-                                        ${responseTimeFields.zipWithIndex.map { case (header, i) => fast"""<th id="col-${i + 6}" class="header sortable"><span>$header</span></th>""" }.mkFastring(Eol)}
+                                        <th id="col-6" class="header sortable"><span>Req/s</span></th>
+                                        ${responseTimeFields.zipWithIndex.map { case (header, i) => fast"""<th id="col-${i + 7}" class="header sortable"><span>$header</span></th>""" }.mkFastring(Eol)}
                                     </tr>
                                 </thead>
                                 <tbody></tbody>
@@ -84,32 +88,36 @@ function generateHtmlRow(request, level, index, parent, group) {
     if (request.name == '$GlobalPageName')
         var url = 'index.html';
     else
-        var url ='req_' + request.pathFormatted + '.html';
+        var url = request.pathFormatted + '.html';
 
     if (group)
         var expandButtonStyle = '';
     else
         var expandButtonStyle = ' hidden';
 
-    var koPercent = (request.stats.numberOfRequests.ko * 100 / request.stats.numberOfRequests.total).toFixed(0);
+    if (request.stats.numberOfRequests.total != 0)
+        var koPercent = (request.stats.numberOfRequests.ko * 100 / request.stats.numberOfRequests.total).toFixed(0) + '%';
+    else
+        var koPercent = '-'
+
     return '<tr id="' + request.pathFormatted + '" class="child-of-' + parent + '"> \\
         <td class="total col-1"> \\
             <span id="' + request.pathFormatted + '" style="margin-left: ' + (level * 10) + 'px;" class="expand-button' + expandButtonStyle + '">&nbsp;</span> \\
             <a href="' + url +'" class="withTooltip">' + shortenNameAndDisplayFullOnHover(request.name) + '</a><span class="value" style="display:none;">' + index + '</span> \\
         </td> \\
-        <td></td> \\
         <td class="value total col-2">' + request.stats.numberOfRequests.total + '</td> \\
         <td class="value ok col-3">' + request.stats.numberOfRequests.ok + '</td> \\
         <td class="value ko col-4">' + request.stats.numberOfRequests.ko + '</td> \\
-         <td class="value ko col-5">' + koPercent + ' %' + '</td> \\
-        <td></td> \\
-        <td class="value total col-6">' + request.stats.minResponseTime.total + '</td> \\
-        <td class="value total col-7">' + request.stats.maxResponseTime.total + '</td> \\
-        <td class="value total col-8">' + request.stats.meanResponseTime.total + '</td> \\
-        <td class="value total col-9">' + request.stats.standardDeviation.total + '</td> \\
-        <td class="value total col-10">' + request.stats.percentiles1.total + '</td> \\
-        <td class="value total col-11">' + request.stats.percentiles2.total + '</td> \\
-        <td class="value total col-12">' + request.stats.meanNumberOfRequestsPerSecond.total + '</td> \\
+        <td class="value ko col-5">' + koPercent + '</td> \\
+        <td class="value total col-6">' + request.stats.meanNumberOfRequestsPerSecond.total + '</td> \\
+        <td class="value total col-7">' + request.stats.minResponseTime.total + '</td> \\
+        <td class="value total col-8">' + request.stats.percentiles1.total + '</td> \\
+        <td class="value total col-9">' + request.stats.percentiles2.total + '</td> \\
+        <td class="value total col-10">' + request.stats.percentiles3.total + '</td> \\
+        <td class="value total col-11">' + request.stats.percentiles4.total + '</td> \\
+        <td class="value total col-12">' + request.stats.maxResponseTime.total + '</td> \\
+        <td class="value total col-13">' + request.stats.meanResponseTime.total + '</td> \\
+        <td class="value total col-14">' + request.stats.standardDeviation.total + '</td> \\
         </tr>';
 }
 

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,46 +13,42 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.config
 
-import scala.tools.nsc.io.{ Directory, Path }
-import scala.tools.nsc.io.Path.string2path
+import java.nio.file.Path
+
 import scala.util.Properties.{ envOrElse, propOrElse }
 
-import io.gatling.core.config.GatlingConfiguration.configuration
+import io.gatling.commons.util.PathHelper._
 
 object GatlingFiles {
 
-  val GatlingHome = envOrElse("GATLING_HOME", propOrElse("GATLING_HOME", "."))
-  val GatlingAssetsPackage = "assets"
-  val GatlingJsFolder = "js"
-  val GatlingStyleFolder = "style"
-  val GatlingAssetsJsPackage = GatlingAssetsPackage / GatlingJsFolder
-  val GatlingAssetsStylePackage = GatlingAssetsPackage / GatlingStyleFolder
+  private val GatlingHome: Path = envOrElse("GATLING_HOME", propOrElse("GATLING_HOME", "."))
+  private val GatlingAssetsPackage: Path = "assets"
+  val GatlingJsFolder: Path = "js"
+  val GatlingStyleFolder: Path = "style"
+  val GatlingAssetsJsPackage: Path = GatlingAssetsPackage / GatlingJsFolder
+  val GatlingAssetsStylePackage: Path = GatlingAssetsPackage / GatlingStyleFolder
 
-  private def resolvePath(path: String): Path = {
-    val rawPath = Path(path)
-    if (rawPath.isAbsolute || rawPath.exists) path else GatlingHome / path
-  }
+  private def resolvePath(path: Path): Path =
+    (if (path.isAbsolute || path.exists) path else GatlingHome / path).normalize().toAbsolutePath
 
-  def dataDirectory: Path = resolvePath(configuration.core.directory.data)
-  def requestBodiesDirectory: Path = resolvePath(configuration.core.directory.requestBodies)
-  def sourcesDirectory: Directory = resolvePath(configuration.core.directory.sources).toDirectory
-  def reportsOnlyDirectory: Option[String] = configuration.core.directory.reportsOnly
-  def binariesDirectory: Option[Directory] = configuration.core.directory.binaries.map(_.toDirectory)
-  def resultDirectory(runUuid: String): Path = resolvePath(configuration.core.directory.results) / runUuid
-  def jsDirectory(runUuid: String): Path = resultDirectory(runUuid) / GatlingJsFolder
-  def styleDirectory(runUuid: String): Path = resultDirectory(runUuid) / GatlingStyleFolder
+  def simulationsDirectory(implicit configuration: GatlingConfiguration): Path = resolvePath(configuration.core.directory.simulations)
+  def resourcesDirectory(implicit configuration: GatlingConfiguration): Path = resolvePath(configuration.core.directory.resources)
+  def reportsOnlyDirectory(implicit configuration: GatlingConfiguration): Option[String] = configuration.core.directory.reportsOnly
+  def binariesDirectory(configuration: GatlingConfiguration): Path = configuration.core.directory.binaries.map(path => resolvePath(path)).getOrElse(GatlingHome / "target" / "test-classes")
+  def resultDirectory(runUuid: String)(implicit configuration: GatlingConfiguration): Path = resolvePath(configuration.core.directory.results) / runUuid
+  def jsDirectory(runUuid: String)(implicit configuration: GatlingConfiguration): Path = resultDirectory(runUuid) / GatlingJsFolder
+  def styleDirectory(runUuid: String)(implicit configuration: GatlingConfiguration): Path = resultDirectory(runUuid) / GatlingStyleFolder
 
-  def simulationLogDirectory(runUuid: String, create: Boolean = true): Directory = {
+  def simulationLogDirectory(runUuid: String, create: Boolean = true)(implicit configuration: GatlingConfiguration): Path = {
     val dir = resultDirectory(runUuid)
-    if (create)
-      dir.createDirectory()
+    if (create) dir.mkdirs
     else {
-      require(dir.exists, s"simulation directory '${dir.toAbsolute}' doesn't exist")
-      require(dir.isDirectory, s"simulation directory '${dir.toAbsolute}' is not a directory")
-
-      dir.toDirectory
+      require(dir.toFile.exists, s"simulation directory '$dir' doesn't exist")
+      require(dir.toFile.isDirectory, s"simulation directory '$dir' is not a directory")
+      dir
     }
   }
 }

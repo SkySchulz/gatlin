@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,46 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.assertion
 
-import scala.reflect.io.Path
-
-import io.gatling.core.result.{ GroupStatsPath, RequestStatsPath }
-import io.gatling.core.result.message.Status
-import io.gatling.core.result.reader.{ DataReader, GeneralStats }
-import io.gatling.core.validation._
+import io.gatling.commons.stats.assertion.{ AssertionPathParts, Details, ForAll, Global }
+import io.gatling.core.config.GatlingConfiguration
 
 trait AssertionSupport {
 
-  val global = new Selector((reader, status) => reader.requestGeneralStats(None, None, status).success, "Global")
+  implicit def string2PathParts(string: String): AssertionPathParts =
+    AssertionPathParts.string2PathParts(string)
 
-  def details(selector: Path): Selector = {
+  def global(implicit configuration: GatlingConfiguration) = new AssertionWithPath(Global)
 
-      def generalStats(selector: Path): (DataReader, Option[Status]) => Validation[GeneralStats] = (reader, status) =>
-        if (selector.segments.isEmpty)
-          reader.requestGeneralStats(None, None, status).success
+  def forAll(implicit configuration: GatlingConfiguration) = new AssertionWithPath(ForAll)
 
-        else {
-          val selectedPath: List[String] = selector.segments
-          val foundPath = reader.statsPaths.find { statsPath =>
-            val path: List[String] = statsPath match {
-              case RequestStatsPath(request, group) =>
-                group match {
-                  case Some(g) => g.hierarchy :+ request
-                  case _       => List(request)
-                }
-              case GroupStatsPath(group) => group.hierarchy
-            }
-            path == selectedPath
-          }
-
-          foundPath match {
-            case None                                   => s"Could not find stats matching selector $selector".failure
-            case Some(RequestStatsPath(request, group)) => reader.requestGeneralStats(Some(request), group, status).success
-            case Some(GroupStatsPath(group))            => reader.requestGeneralStats(None, Some(group), status).success
-          }
-        }
-
-    new Selector(generalStats(selector), selector.segments.mkString(" / "))
-  }
+  def details(pathParts: AssertionPathParts)(implicit configuration: GatlingConfiguration) = new AssertionWithPath(Details(pathParts.parts))
 }

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,59 +13,58 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.action
 
-import java.util.concurrent.TimeUnit.SECONDS
+import scala.concurrent.duration._
 
-import scala.concurrent.duration.Duration
-
-import org.junit.runner.RunWith
-import org.specs2.mutable.Specification
-import org.specs2.runner.JUnitRunner
-
-import io.gatling.core.Predef.{ pace, value2Expression }
-import io.gatling.core.config.Protocols
+import io.gatling.AkkaSpec
+import io.gatling.commons.util.DefaultClock
+import io.gatling.core.Predef._
 import io.gatling.core.session.Session
-import io.gatling.core.test.ActorSupport
+import io.gatling.core.stats.StatsEngine
 
-@RunWith(classOf[JUnitRunner])
-class PaceSpec extends Specification {
+import akka.testkit._
 
-  "pace" should {
-    "run actions with a minimum wait time" in ActorSupport { testKit =>
-      import testKit._
-      val instance = pace(Duration(3, SECONDS), "paceCounter").build(self, Protocols())
+class PaceSpec extends AkkaSpec {
 
-      // Send session, expect response near-instantly
-      instance ! Session("TestScenario", "testUser")
-      val session1 = expectMsgClass(Duration(1, SECONDS), classOf[Session])
+  private val clock = new DefaultClock
 
-      // Send second session, expect nothing for 7 seconds, then a response
-      instance ! session1
-      expectNoMsg(Duration(2, SECONDS))
-      val session2 = expectMsgClass(Duration(2, SECONDS), classOf[Session])
+  private val interval = 3 seconds
+  private val counterName = "paceCounter"
 
-      // counter must have incremented by 3 seconds
-      session2("paceCounter").as[Long] must_== session1("paceCounter").as[Long] + 3000L
-    }
+  "pace" should "run actions with a minimum wait time" in {
+    val instance = new Pace(interval, counterName, system, mock[StatsEngine], clock, new ActorDelegatingAction("next", self))
 
-    "run actions immediately if the minimum time has expired" in ActorSupport { testKit =>
-      import testKit._
-      val instance = pace(Duration(3, SECONDS), "paceCounter").build(self, Protocols())
+    // Send session, expect response near-instantly
+    instance ! Session("TestScenario", 0, clock.nowMillis)
+    val session1 = expectMsgClass(1 second, classOf[Session])
 
-      // Send session, expect response near-instantly
-      instance ! Session("TestScenario", "testUser")
-      val session1 = expectMsgClass(Duration(1, SECONDS), classOf[Session])
+    // Send second session, expect nothing for ~3 seconds, then a response
+    instance ! session1
+    expectNoMessage(2 seconds)
+    val session2 = expectMsgClass(2 seconds, classOf[Session])
 
-      // Wait 3 seconds - simulate overrunning action
-      Thread.sleep(3000L)
+    // counter must have incremented by 3 seconds
+    session2(counterName).as[Long] shouldBe session1(counterName).as[Long] + interval.toMillis +- 50
+  }
 
-      // Send second session, expect response near-instantly
-      instance ! session1
-      val session2 = expectMsgClass(Duration(1, SECONDS), classOf[Session])
+  it should "run actions immediately if the minimum time has expired" in {
+    val overrunTime = 1 second
+    val instance = new Pace(interval, counterName, system, mock[StatsEngine], clock, new ActorDelegatingAction("next", self))
 
-      // counter must have incremented by 3 seconds
-      session2("paceCounter").as[Long] must_== session1("paceCounter").as[Long] + 3000L
-    }
+    // Send session, expect response near-instantly
+    instance ! Session("TestScenario", 0, clock.nowMillis)
+    val session1 = expectMsgClass(1 second, classOf[Session])
+
+    // Wait 4 seconds - simulate overrunning action
+    Thread.sleep((interval + overrunTime).dilated.toMillis)
+
+    // Send second session, expect response near-instantly
+    instance ! session1
+    val session2 = expectMsgClass(1 second, classOf[Session])
+
+    // counter must have incremented by 3 seconds
+    session2(counterName).as[Long] shouldBe session1(counterName).as[Long] + overrunTime.toMillis + interval.toMillis +- 50
   }
 }

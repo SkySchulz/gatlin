@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.core.structure
 
 import io.gatling.core.action.builder.FeedBuilder
-import io.gatling.core.feeder.FeederBuilder
-import io.gatling.core.session.{ Expression, ExpressionWrapper }
+import io.gatling.core.feeder._
+import io.gatling.core.session._
 
 object Feeds {
-  val oneExpression = 1.expression
+
+  private val OneExpression = 1.expressionSuccess
 }
 
 trait Feeds[B] extends Execs[B] {
@@ -31,5 +33,6 @@ trait Feeds[B] extends Execs[B] {
    * @param feederBuilder the feeder from which the values will be loaded
    * @param number the number of records to be polled (default 1)
    */
-  def feed(feederBuilder: FeederBuilder[_], number: Expression[Int] = Feeds.oneExpression): B = exec(FeedBuilder(feederBuilder, number))
+  def feed(feederBuilder: FeederBuilder, number: Expression[Int] = Feeds.OneExpression): B =
+    exec(new FeedBuilder(feederBuilder, number))
 }

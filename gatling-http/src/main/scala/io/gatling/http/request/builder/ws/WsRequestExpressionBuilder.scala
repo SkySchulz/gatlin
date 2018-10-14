@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,22 +13,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.request.builder.ws
 
-import io.gatling.core.validation.{ FailureWrapper, SuccessWrapper, Validation }
-import io.gatling.http.config.HttpProtocol
-import io.gatling.http.request.builder.{ RequestExpressionBuilder, CommonAttributes }
+import io.gatling.core.config.GatlingConfiguration
+import io.gatling.core.session.Session
+import io.gatling.http.cache.HttpCaches
+import io.gatling.http.protocol.HttpProtocol
+import io.gatling.http.request.builder.{ CommonAttributes, RequestExpressionBuilder }
 import io.gatling.http.util.HttpHelper
 
-class WsRequestExpressionBuilder(commonAttributes: CommonAttributes, protocol: HttpProtocol)
-    extends RequestExpressionBuilder(commonAttributes, protocol) {
+class WsRequestExpressionBuilder(
+    commonAttributes: CommonAttributes,
+    httpCaches:       HttpCaches,
+    httpProtocol:     HttpProtocol,
+    configuration:    GatlingConfiguration
+)
+  extends RequestExpressionBuilder(commonAttributes, httpCaches, httpProtocol, configuration) {
 
-  def makeAbsolute(url: String): Validation[String] =
-    if (HttpHelper.isAbsoluteWsUrl(url))
-      url.success
-    else
-      protocol.wsPart.wsBaseURL match {
-        case Some(baseURL) => (baseURL + url).success
-        case _             => s"No protocol.baseURL defined but provided url is relative : $url".failure
-      }
+  override protected def baseUrl: Session => Option[String] = httpCaches.wsBaseUrl
+
+  override protected def protocolBaseUrls: List[String] =
+    httpProtocol.wsPart.wsBaseUrls
+
+  override protected def isAbsoluteUrl(url: String): Boolean =
+    HttpHelper.isAbsoluteWsUrl(url)
 }

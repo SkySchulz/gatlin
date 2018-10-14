@@ -1,35 +1,75 @@
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.gatling.http.integration
 
-import io.gatling.core.Predef._
-import io.gatling.core.config.Protocols
-import io.gatling.http.Predef._
-import org.junit.runner.RunWith
-import org.specs2.mutable.Specification
-import org.specs2.runner.JUnitRunner
-import spray.http.HttpHeaders.{ Location, `Set-Cookie` }
-import spray.http.HttpMethods._
-import spray.http.MediaTypes._
-import spray.http._
+import java.nio.charset.StandardCharsets
 
-@RunWith(classOf[JUnitRunner])
-class HttpIntegrationSpec extends Specification {
-  sequential
+import io.gatling.core.config.GatlingConfiguration
+import io.gatling.http.HeaderNames._
+import io.gatling.http.HttpSpec
+import io.gatling.core.CoreDsl
+import io.gatling.http.HttpDsl
+import io.gatling.http.check.HttpCheckSupport
 
-  "Gatling" should {
-    "send cookies returned in redirects in subsequent requests" in MockServerSupport { implicit testKit =>
-      import MockServerSupport._
-      import Checks._
+import io.netty.buffer.Unpooled
+import io.netty.channel.ChannelFutureListener
+import io.netty.handler.codec.http.{ ServerCookieEncoder => _, DefaultCookie => _, _ }
+import io.netty.handler.codec.http.cookie._
 
-      serverMock({
-        case HttpRequest(GET, Uri.Path("/page1"), _, _, _) =>
-          HttpResponse(status = 301, headers = List(Location("/page2"), `Set-Cookie`(HttpCookie("TestCookie1", "Test1"))))
+class HttpIntegrationSpec extends HttpSpec with CoreDsl with HttpDsl {
 
-        case HttpRequest(GET, Uri.Path("/page2"), _, _, _) =>
-          HttpResponse(entity = "Hello World", headers = List(`Set-Cookie`(HttpCookie("TestCookie2", "Test2"))))
+  val regexCheck = super[CoreDsl].regex(_)
 
-        case HttpRequest(GET, Uri.Path("/page3"), _, _, _) =>
-          HttpResponse(entity = "Hello Again")
-      })
+  implicit val configuration = GatlingConfiguration.loadForTest()
+
+  ignore should "send cookies returned in redirects in subsequent requests" in {
+
+    val handler: Handler = {
+      case HttpRequest(HttpMethod.GET, "/page1") =>
+        val response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.MOVED_PERMANENTLY)
+        response.headers()
+          .set(SetCookie, ServerCookieEncoder.STRICT.encode(new DefaultCookie("TestCookie1", "Test1")))
+          .set(Location, "/page2")
+          .set(ContentLength, 0)
+
+        ctx => ctx.channel.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE)
+
+      case HttpRequest(HttpMethod.GET, "/page2") =>
+        val bytes = "Hello World".getBytes(StandardCharsets.UTF_8)
+
+        val response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, Unpooled.wrappedBuffer(bytes))
+        response.headers()
+          .set(SetCookie, ServerCookieEncoder.STRICT.encode(new DefaultCookie("TestCookie2", "Test2")))
+          .set(ContentLength, bytes.length)
+
+        ctx => ctx.channel.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE)
+
+      case HttpRequest(HttpMethod.GET, "/page3") =>
+        val bytes = "Hello Again".getBytes(StandardCharsets.UTF_8)
+
+        val response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, Unpooled.wrappedBuffer(bytes))
+        response.headers()
+          .set(SetCookie, ServerCookieEncoder.STRICT.encode(new DefaultCookie("TestCookie2", "Test2")))
+          .set(ContentLength, bytes.length)
+
+        ctx => ctx.channel.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE)
+    }
+
+    runWithHttpServer(handler) { implicit httpServer =>
 
       val session = runScenario(
         scenario("Cookie Redirect")
@@ -37,38 +77,35 @@ class HttpIntegrationSpec extends Specification {
             http("/page1")
               .get("/page1")
               .check(
-                regex("Hello World"),
-                currentLocation.is(s"http://localhost:$mockHttpPort/page2")))
+                regexCheck("Hello World"),
+                currentLocation.is(s"http://localhost:$mockHttpPort/page2")
+              )
+          )
           .exec(
             http("/page3")
               .get("/page3")
-              .check(regex("Hello Again"))))
+              .check(
+                regexCheck("Hello Again")
+              )
+          )
+      )
 
-      session.isFailed should beFalse
+      session.isFailed shouldBe false
 
       verifyRequestTo("/page1")
-      verifyRequestTo("/page2", 1, hasCookie("TestCookie1", "Test1"))
-      verifyRequestTo("/page3", 1, hasCookie("TestCookie1", "Test1"), hasCookie("TestCookie2", "Test2"))
-      success
+      verifyRequestTo("/page2", 1, checkCookie("TestCookie1", "Test1"))
+      verifyRequestTo("/page3", 1, checkCookie("TestCookie1", "Test1"), checkCookie("TestCookie2", "Test2"))
+    }
+  }
+
+  ignore should "retrieve linked resources, when resource downloading is enabled" in {
+
+    val handler: Handler = {
+      case HttpRequest(HttpMethod.GET, path) =>
+        sendFile(path.drop(1)) // Drop leading slash in path
     }
 
-    "retrieve linked resources, when resource downloading is enabled" in MockServerSupport { implicit testKit =>
-      import MockServerSupport._
-
-      serverMock({
-        case HttpRequest(GET, Uri.Path("/resourceTest/index.html"), _, _, _) =>
-          HttpResponse(entity = file("resourceTest/index.html", `text/html`))
-
-        case HttpRequest(GET, Uri.Path("/resourceTest/stylesheet.css"), _, _, _) =>
-          HttpResponse(entity = file("resourceTest/stylesheet.css"))
-
-        case HttpRequest(GET, Uri.Path("/resourceTest/img.png"), _, _, _) =>
-          HttpResponse(entity = file("resourceTest/img.png"))
-
-        case HttpRequest(GET, Uri.Path("/resourceTest/script.js"), _, _, _) =>
-          HttpResponse(entity = file("resourceTest/script.js"))
-      })
-
+    runWithHttpServer(handler) { implicit httpServer =>
       val session = runScenario(
         scenario("Resource downloads")
           .exec(
@@ -76,46 +113,47 @@ class HttpIntegrationSpec extends Specification {
               .get("/resourceTest/index.html")
               .check(
                 css("h1").is("Resource Test"),
-                regex("<title>Resource Test</title>"))),
-        protocols = Protocols(MockServerSupport.httpProtocol.inferHtmlResources(BlackList(".*/bad_resource.png"))))
+                regexCheck("<title>Resource Test</title>")
+              )
+          ),
+        protocolCustomizer = _.inferHtmlResources(BlackList(".*/bad_resource.png"))
+      )
 
-      session.isFailed should beFalse
+      session.isFailed shouldBe false
 
       verifyRequestTo("/resourceTest/index.html")
       verifyRequestTo("/resourceTest/stylesheet.css")
       verifyRequestTo("/resourceTest/script.js")
       verifyRequestTo("/resourceTest/img.png")
-      verifyRequestTo("/bad_resource.png", 0)
+      verifyRequestTo("/resourceTest/bad_resource.png", 0)
+    }
+  }
 
-      success
+  ignore should "fetch resources in conditional comments" in {
+
+    val handler: Handler = {
+      case HttpRequest(HttpMethod.GET, path) =>
+        sendFile(path.drop(1)) // Drop leading slash in path
     }
 
-    "fetch resources in conditional comments" in MockServerSupport { implicit testKit =>
-      import MockServerSupport._
-
-      serverMock({
-        case HttpRequest(GET, Uri.Path("/resourceTest/indexIE.html"), _, _, _) =>
-          HttpResponse(entity = file("resourceTest/indexIE.html", `text/html`))
-
-        case HttpRequest(GET, Uri.Path("/resourceTest/stylesheet.css"), _, _, _) =>
-          HttpResponse(entity = file("resourceTest/stylesheet.css"))
-      })
-
+    runWithHttpServer(handler) { implicit httpServer =>
       val session = runScenario(
         scenario("Resource downloads")
           .exec(
             http("/resourceTest/indexIE.html")
               .get("/resourceTest/indexIE.html")
-              .header("User-Agent",
-                "Mozilla/5.0 (Windows; U; MSIE 9.0; WIndows NT 9.0; en-US))")),
-        protocols = Protocols(MockServerSupport.httpProtocol.inferHtmlResources()))
+              .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows; U; MSIE 9.0; WIndows NT 9.0; en-US)"
+              )
+          ),
+        protocolCustomizer = _.inferHtmlResources()
+      )
 
-      session.isFailed should beFalse
+      session.isFailed shouldBe false
 
       verifyRequestTo("/resourceTest/indexIE.html")
       verifyRequestTo("/resourceTest/stylesheet.css")
-
-      success
     }
   }
 }

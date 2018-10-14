@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,14 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.http.cookie
 
-import java.net.URI
+import io.gatling.http.client.ahc.uri.Uri
 
-import com.ning.http.client.cookie.Cookie
-
-import io.gatling.core.util.TimeHelper.nowMillis
-import io.gatling.http.util.HttpHelper.isSecure
+import io.netty.handler.codec.http.cookie.Cookie
 
 case class CookieKey(name: String, domain: String, path: String)
 
@@ -28,34 +26,38 @@ case class StoredCookie(cookie: Cookie, hostOnly: Boolean, persistent: Boolean, 
 
 object CookieJar {
 
-  val UnspecifiedMaxAge = -1
-  val UnspecifiedExpires = -1L
+  val Empty = CookieJar(Map.empty)
 
-  def requestDomain(requestURI: URI) = requestURI.getHost.toLowerCase
+  private def requestDomain(requestUri: Uri) = requestUri.getHost.toLowerCase
 
-  def requestPath(requestURI: URI) = requestURI.getPath match {
+  private def requestPath(requestUri: Uri) = requestUri.getPath match {
     case "" => "/"
     case p  => p
   }
 
   // rfc6265#section-5.2.3
   // Let cookie-domain be the attribute-value without the leading %x2E (".") character.
-  def cookieDomain(cookieDomain: Option[String], requestDomain: String) = cookieDomain match {
+  private def cookieDomain(cookieDomain: Option[String], requestDomain: String) = cookieDomain match {
     case Some(dom) =>
-      val domain = (if (dom.charAt(0) == '.') dom.substring(1) else dom).toLowerCase
-      (domain, false)
+      ((if (dom.charAt(0) == '.') dom.substring(1) else dom).toLowerCase, false)
     case None =>
       (requestDomain, true)
   }
 
   // rfc6265#section-5.2.4
-  def cookiePath(rawCookiePath: Option[String], requestPath: String) = {
+  private def cookiePath(rawCookiePath: Option[String], requestPath: String) = {
 
-      // rfc6265#section-5.1.4
-      def defaultCookiePath() = requestPath match {
-        case p if !p.isEmpty && p.charAt(0) == '/' && p.count(_ == '/') > 1 => p.substring(0, p.lastIndexOf('/'))
-        case _ => "/"
-      }
+    // rfc6265#section-5.1.4
+    def defaultCookiePath() = requestPath match {
+      case p if p.length > 1 && p.charAt(0) == '/' =>
+        val lastSlash = p.lastIndexOf('/')
+        if (lastSlash > 0) { // more than one slash
+          p.substring(0, lastSlash)
+        } else {
+          "/"
+        }
+      case _ => "/"
+    }
 
     rawCookiePath match {
       case Some(path) if !path.isEmpty && path.charAt(0) == '/' => path
@@ -63,24 +65,23 @@ object CookieJar {
     }
   }
 
-  def hasExpired(c: Cookie): Boolean = {
-    val maxAge = c.getMaxAge
-    val expires = c.getExpires
-    (maxAge != CookieJar.UnspecifiedMaxAge && maxAge <= 0) || (expires != CookieJar.UnspecifiedExpires && expires <= nowMillis)
+  private def hasExpired(c: Cookie): Boolean = {
+    val maxAge = c.maxAge
+    maxAge != Cookie.UNDEFINED_MAX_AGE && maxAge <= 0
   }
 
   // rfc6265#section-5.1.3
   // check "The string is a host name (i.e., not an IP address)" ignored
-  def domainsMatch(cookieDomain: String, requestDomain: String, hostOnly: Boolean) =
+  private def domainsMatch(cookieDomain: String, requestDomain: String, hostOnly: Boolean) =
     (hostOnly && requestDomain == cookieDomain) ||
       (requestDomain == cookieDomain || requestDomain.endsWith("." + cookieDomain))
 
   // rfc6265#section-5.1.4
-  def pathsMatch(cookiePath: String, requestPath: String) =
+  private def pathsMatch(cookiePath: String, requestPath: String) =
     cookiePath == requestPath ||
       (requestPath.startsWith(cookiePath) && (cookiePath.last == '/' || requestPath.charAt(cookiePath.length) == '/'))
 
-  def apply(uri: URI, cookies: List[Cookie]): CookieJar = CookieJar(Map.empty).add(uri, cookies)
+  def apply(uri: Uri, cookies: List[Cookie], nowMillis: Long): CookieJar = Empty.add(uri, cookies, nowMillis)
 }
 
 case class CookieJar(store: Map[CookieKey, StoredCookie]) {
@@ -88,52 +89,46 @@ case class CookieJar(store: Map[CookieKey, StoredCookie]) {
   import CookieJar._
 
   /**
-   * @param requestURI       the uri used to deduce defaults for  optional domains and paths
+   * @param requestUri       the uri used to deduce defaults for  optional domains and paths
    * @param cookies    the cookies to store
    */
-  def add(requestURI: URI, cookies: List[Cookie]): CookieJar = {
+  def add(requestUri: Uri, cookies: List[Cookie], nowMillis: Long): CookieJar = {
 
-    val thisRequestDomain = requestDomain(requestURI)
-    val thisRequestPath = requestPath(requestURI)
+    val thisRequestDomain = requestDomain(requestUri)
+    val thisRequestPath = requestPath(requestUri)
 
-    add(thisRequestDomain, thisRequestPath, cookies)
+    add(thisRequestDomain, thisRequestPath, cookies, nowMillis)
   }
 
-  def add(requestDomain: String, requestPath: String, cookies: List[Cookie]): CookieJar = {
+  def add(requestDomain: String, requestPath: String, cookies: List[Cookie], nowMillis: Long): CookieJar = {
 
     val newStore = cookies.foldLeft(store) {
       (updatedStore, cookie) =>
 
-        val (keyDomain, hostOnly) = cookieDomain(Option(cookie.getDomain), requestDomain)
+        val (keyDomain, hostOnly) = cookieDomain(Option(cookie.domain), requestDomain)
 
-        val keyPath = cookiePath(Option(cookie.getPath), requestPath)
+        val keyPath = cookiePath(Option(cookie.path), requestPath)
 
         if (hasExpired(cookie)) {
-          updatedStore - CookieKey(cookie.getName.toLowerCase, keyDomain, keyPath)
+          updatedStore - CookieKey(cookie.name.toLowerCase, keyDomain, keyPath)
 
         } else {
-          val persistent = cookie.getExpires != UnspecifiedExpires || cookie.getMaxAge != UnspecifiedMaxAge
-          updatedStore + (CookieKey(cookie.getName.toLowerCase, keyDomain, keyPath) -> StoredCookie(cookie, hostOnly, persistent, nowMillis))
+          val persistent = cookie.maxAge != Cookie.UNDEFINED_MAX_AGE
+          updatedStore + (CookieKey(cookie.name.toLowerCase, keyDomain, keyPath) -> StoredCookie(cookie, hostOnly, persistent, nowMillis))
         }
     }
 
     CookieJar(newStore)
   }
 
-  def get(requestURI: URI): List[Cookie] =
+  def get(domain: String, path: String, secure: Boolean): List[Cookie] =
     if (store.isEmpty) {
       Nil
     } else {
-      val thisRequestDomain = requestDomain(requestURI)
-
-      val thisRequestPath = requestPath(requestURI)
-
-      val secureURI = isSecure(requestURI)
-
-        def isCookieMatching(key: CookieKey, storedCookie: StoredCookie) =
-          domainsMatch(key.domain, thisRequestDomain, storedCookie.hostOnly) &&
-            pathsMatch(key.path, thisRequestPath) &&
-            (!storedCookie.cookie.isSecure || secureURI)
+      def isCookieMatching(key: CookieKey, storedCookie: StoredCookie) =
+        domainsMatch(key.domain, domain, storedCookie.hostOnly) &&
+          pathsMatch(key.path, path) &&
+          (secure || !storedCookie.cookie.isSecure)
 
       val matchingCookies = store.filter {
         case (key, storedCookie) => isCookieMatching(key, storedCookie)
@@ -152,4 +147,11 @@ case class CookieJar(store: Map[CookieKey, StoredCookie]) {
 
       }.map(_._2.cookie)
     }
+
+  def get(requestUri: Uri): List[Cookie] =
+    get(
+      domain = requestDomain(requestUri),
+      path = requestPath(requestUri),
+      secure = requestUri.isSecured
+    )
 }

@@ -1,11 +1,11 @@
-/**
- * Copyright 2011-2014 eBusiness Information, Groupe Excilys (www.ebusinessinformation.fr)
+/*
+ * Copyright 2011-2018 GatlingCorp (https://gatling.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 		http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,27 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.gatling.recorder.ui.swing.frame
 
-import scala.collection.JavaConversions.seqAsJavaList
+import java.awt.Color
+
+import scala.collection.JavaConverters._
 import scala.swing._
 import scala.swing.BorderPanel.Position._
 import scala.swing.ListView.IntervalMode.Single
 import scala.swing.Swing.pair2Dimension
 import scala.swing.event.ListSelectionChanged
 
-import com.typesafe.scalalogging.slf4j.StrictLogging
+import io.gatling.commons.util.StringHelper.Eol
+import io.gatling.recorder.model._
 
+import com.typesafe.scalalogging.StrictLogging
 import io.gatling.recorder.ui._
 import io.gatling.recorder.ui.swing.component.TextAreaPanel
 import io.gatling.recorder.ui.swing.Commons.IconList
 import io.gatling.recorder.ui.swing.util.UIHelper._
 
-class RunningFrame(frontend: RecorderFrontend) extends MainFrame with StrictLogging {
+import io.netty.handler.codec.http.HttpHeaders
 
-  /************************************/
+private[swing] class RunningFrame(frontend: RecorderFrontEnd) extends MainFrame with StrictLogging {
+
+/************************************/
   /**           COMPONENTS           **/
-  /************************************/
+/************************************/
 
   /* Top panel components */
   private val tagField = new TextField(15)
@@ -45,7 +52,7 @@ class RunningFrame(frontend: RecorderFrontend) extends MainFrame with StrictLogg
   /* Center panel components */
   private val initialSize = (472, 150)
   private val newSize = (472, 900)
-  private val events = new ListView[EventInfo] { selection.intervalMode = Single }
+  private val events = new ListView[FrontEndEvent] { selection.intervalMode = Single }
   private val requestHeaders = new TextAreaPanel("Summary", initialSize)
   private val responseHeaders = new TextAreaPanel("Summary", initialSize)
   private val requestBodies = new TextAreaPanel("Body", initialSize)
@@ -53,15 +60,15 @@ class RunningFrame(frontend: RecorderFrontend) extends MainFrame with StrictLogg
   private val infoPanels = List(requestHeaders, requestBodies, responseHeaders, responseBodies)
 
   /* Bottom panel components */
-  private val hostsRequiringCertificates = new ListView[String]
+  private val hostsRequiringCertificates = new ListView[String] { foreground = Color.red }
 
-  /**********************************/
+/**********************************/
   /**           UI SETUP           **/
-  /**********************************/
+/**********************************/
 
   /* Frame setup */
   title = "Gatling Recorder - Running..."
-  peer.setIconImages(IconList)
+  peer.setIconImages(IconList.asJava)
 
   /* Layout setup */
   val root = new BorderPanel {
@@ -91,7 +98,13 @@ class RunningFrame(frontend: RecorderFrontend) extends MainFrame with StrictLogg
       val elements = new BorderPanel {
         border = titledBorder("Executed Events")
 
-        layout(new ScrollPane(events)) = Center
+        val scrollPane = new ScrollPane(events) {
+          horizontalScrollBarPolicy = ScrollPane.BarPolicy.AsNeeded
+          verticalScrollBarPolicy = ScrollPane.BarPolicy.AsNeeded
+          preferredSize = new Dimension(400, 120)
+        }
+
+        layout(scrollPane) = Center
       }
       val requests = new BorderPanel {
         border = titledBorder("Request Information")
@@ -126,9 +139,9 @@ class RunningFrame(frontend: RecorderFrontend) extends MainFrame with StrictLogg
 
   centerOnScreen()
 
-  /*****************************************/
+/*****************************************/
   /**           EVENTS HANDLING           **/
-  /*****************************************/
+/*****************************************/
 
   /* Reactions */
   listenTo(events.selection)
@@ -136,8 +149,8 @@ class RunningFrame(frontend: RecorderFrontend) extends MainFrame with StrictLogg
     case ListSelectionChanged(_, _, _) if events.peer.getSelectedIndex >= 0 =>
       val selectedIndex = events.peer.getSelectedIndex
       events.listData(selectedIndex) match {
-        case requestInfo: RequestInfo => showRequest(requestInfo)
-        case _                        => infoPanels.foreach(_.textArea.clear())
+        case requestInfo: RequestFrontEndEvent => showRequest(requestInfo)
+        case _                                 => infoPanels.foreach(_.textArea.clear())
       }
     case _ => // Do nothing
   }
@@ -152,13 +165,28 @@ class RunningFrame(frontend: RecorderFrontend) extends MainFrame with StrictLogg
     }
   }
 
+  private def headersToString(headers: HttpHeaders): String =
+    headers.entries.asScala.map { entry => s"${entry.getKey}: ${entry.getValue}" }.mkString(Eol)
+
+  private def summary(request: HttpRequest): String = {
+    import request._
+    s"""$httpVersion $method $uri
+         |${headersToString(headers)}""".stripMargin
+  }
+
+  private def summary(response: HttpResponse): String = {
+    import response._
+    s"""$status $statusText
+          |${headersToString(headers)}""".stripMargin
+  }
+
   /**
    * Display request going through the Recorder
    * @param requestInfo The outgoing request info
    */
-  private def showRequest(requestInfo: RequestInfo): Unit = {
-    requestHeaders.textArea.text = requestInfo.request.toString
-    responseHeaders.textArea.text = requestInfo.response.toString
+  private def showRequest(requestInfo: RequestFrontEndEvent): Unit = {
+    requestHeaders.textArea.text = summary(requestInfo.request)
+    responseHeaders.textArea.text = summary(requestInfo.response)
     requestBodies.textArea.text = requestInfo.requestBody
     responseBodies.textArea.text = requestInfo.responseBody
     infoPanels.foreach(_.preferredSize = newSize)
@@ -170,22 +198,23 @@ class RunningFrame(frontend: RecorderFrontend) extends MainFrame with StrictLogg
    * or requests of their content
    */
   def clearState(): Unit = {
-    events.listData = Seq.empty
+    events.clear()
     infoPanels.foreach(_.textArea.clear())
     tagField.clear()
+    hostsRequiringCertificates.clear()
   }
 
   /**
    * Handle Recorder Events sent by the controller,
    * and display them accordingly
-   * @param eventInfo the event sent by the controller
+   * @param event the event sent by the controller
    */
-  def receiveEventInfo(eventInfo: EventInfo): Unit = {
-    eventInfo match {
-      case pauseInfo: PauseInfo => events.add(pauseInfo)
-      case requestInfo: RequestInfo => events.add(requestInfo)
-      case tagInfo: TagInfo => events.add(tagInfo)
-      case SSLInfo(uri) if !hostsRequiringCertificates.listData.contains(uri) => hostsRequiringCertificates.add(uri)
+  def receiveEvent(event: FrontEndEvent): Unit = {
+    event match {
+      case pauseInfo: PauseFrontEndEvent => events.add(pauseInfo)
+      case requestInfo: RequestFrontEndEvent => events.add(requestInfo)
+      case tagInfo: TagFrontEndEvent => events.add(tagInfo)
+      case SslFrontEndEvent(uri) if !hostsRequiringCertificates.listData.contains(uri) => hostsRequiringCertificates.add(uri)
       case e => logger.debug(s"dropping event $e")
     }
   }
